@@ -1,0 +1,61 @@
+const mongoose = require("mongoose");
+
+const reviewSchema = new mongoose.Schema({
+  review_id: { type: String, required: true, unique: true },
+  hotel_id: { type: mongoose.Schema.Types.ObjectId, ref: "Hotel", required: true },
+  hotel_name: { type: String },
+  reviewer_name: { type: String, required: true },
+  rating: { type: Number, required: true, min: 1, max: 5 },
+  review_text: { type: String, required: true },
+  review_date: { type: String },
+  stay_date: { type: String },
+  platform: { type: String },
+  platform_review_id: { type: String },
+  room_number: { type: String },
+  guest_email: { type: String },
+  photo_urls: { type: String },
+  reviewer_language: { type: String },
+  loyalty_tier: { type: String },
+  status: { type: String, default: "Pending AI" },
+  sentiment: { type: String },
+  sentiment_reason: { type: String },
+  confidence: { type: Number },
+  departments: [String],
+  primary_department: { type: String },
+  urgency: { type: String },
+  urgency_reason: { type: String },
+  issues: [String],
+  positive_aspects: [String],
+  requires_response: { type: Boolean },
+  response_priority: { type: String },
+  suggested_action: { type: String },
+  is_factual_only: { type: Boolean },
+  is_suspicious: { type: Boolean },
+  suspicious_reason: { type: String },
+  guest_emotion: { type: String },
+  escalation_risk: { type: Boolean },
+  escalation_reason: { type: String },
+  needs_human_review: { type: Boolean },
+  linked_ticket_id: { type: String },
+  response_text: { type: String },
+  response_tone: { type: String },
+  approved_by: { type: String },
+  approved_at: { type: Number },
+  classified_at: { type: Number },
+  imported_at: { type: Number },
+  internal_notes: [{
+    text: String,
+    author: String,
+    timestamp: Number
+  }],
+  response_history: [{
+    version: Number,
+    text: String,
+    tone: String,
+    editor: String,
+    timestamp: Number,
+    is_approved: Boolean
+  }]
+}, { timestamps: true });
+
+module.exports = mongoose.model("Review", reviewSchema);
