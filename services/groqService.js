@@ -28,9 +28,10 @@ exports.analyseReview = async (text, rating) => {
       
       4. primary_department: "Front Office", "Housekeeping", "Maintenance", "F&B", "Security", or "Management"
       5. urgency: "High", "Medium", or "Low"
-      6. issues: array of specific issue strings
-      7. suggested_reply: A draft reply to the guest
-      8. needs_human_review: Set to true if final confidence < 75 or sentiment is highly complex.
+      6. issues: array of specific issue strings (e.g. ["cold food", "noisy room"]) - PLAIN TEXT ONLY, NO OBJECTS
+      7. positive_aspects: array of positive points (e.g. ["friendly staff", "clean pool"]) - PLAIN TEXT ONLY, NO OBJECTS
+      8. suggested_reply: A draft reply to the guest
+      9. needs_human_review: Set to true if final confidence < 75 or sentiment is highly complex.
 
       Format: JSON only.
     `;

@@ -105,16 +105,33 @@ exports.batchAnalyseReviews = async (reviews, hotelId) => {
       if (aiResult) {
         review.sentiment = aiResult.sentiment;
         review.confidence = aiResult.confidence;
-        
+
         // Only assign department if autoTicket is ON
         if (isAutoTicketOn) {
           review.primary_department = aiResult.primary_department;
         } else {
-          review.primary_department = null; 
+          review.primary_department = null;
         }
-        
+
         review.urgency = aiResult.urgency;
-        review.issues = aiResult.issues;
+        
+        // Robust sanitization: convert objects to strings if AI returns them
+        const sanitizeArray = (arr) => {
+          if (!Array.isArray(arr)) return [];
+          return arr.map(item => {
+            if (typeof item === 'string') return item;
+            if (typeof item === 'object' && item !== null) {
+              // Try to find a logical text field like 'issue', 'aspect', or 'description'
+              return item.issue || item.aspect || item.description || item.text || JSON.stringify(item);
+            }
+            return String(item);
+          });
+        };
+
+        review.issues = sanitizeArray(aiResult.issues);
+        review.positive_aspects = sanitizeArray(aiResult.positive_aspects);
+        review.departments = sanitizeArray(aiResult.departments);
+        
         review.suggested_reply = aiResult.suggested_reply;
         review.needs_human_review = aiResult.needs_human_review;
         review.status = "AI Processed";
