@@ -1,7 +1,7 @@
 const Ticket = require("../models/Ticket");
 const Review = require("../models/Review");
 const Hotel = require("../models/Hotel");
-const User = require("../models/User");
+const Staff = require("../models/Staff");
 const { sendEscalationEmail } = require("../utils/emailService");
 
 exports.getTickets = async (req, res, next) => {
@@ -27,6 +27,21 @@ exports.getTickets = async (req, res, next) => {
       ];
     }
 
+    // AUTO-CLOSE LOGIC: 24h after RESOLVED
+    const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+    await Ticket.updateMany(
+      { 
+        hotel_id: req.user.hotel_id, 
+        status: "Resolved", 
+        resolved_at: { $lte: twentyFourHoursAgo } 
+      },
+      { 
+        status: "Closed", 
+        closed_at: Date.now(),
+        $push: { status_history: { status: "Closed", changed_by: "System (Auto)", timestamp: Date.now() } }
+      }
+    );
+
     const tickets = await Ticket.find(query).sort({ created_at: -1 });
     res.json({ success: true, data: { tickets, total: tickets.length } });
   } catch (err) {
@@ -36,9 +51,34 @@ exports.getTickets = async (req, res, next) => {
 
 exports.createTicket = async (req, res, next) => {
   try {
+    const hotel = await Hotel.findById(req.user.hotel_id);
+    const slaConfig = hotel?.slaConfig || { high: 4, medium: 24, low: 72 };
+    const deptSla = hotel?.deptSlaConfig || {};
+    
+    const urgencyKey = (req.body.urgency || "Medium").toLowerCase();
+    const deptName = req.body.department;
+    
+    // Calculate SLA: Dept override takes priority, then urgency-based
+    let deptHours;
+    if (deptName) {
+      const foundDeptKey = Object.keys(deptSla).find(k => k.toLowerCase() === deptName.toLowerCase());
+      if (foundDeptKey) deptHours = deptSla[foundDeptKey];
+    }
+
+    // Also handle case-insensitivity for urgency lookup
+    let urgencyHours;
+    if (urgencyKey) {
+      const foundUrgencyKey = Object.keys(slaConfig).find(k => k.toLowerCase() === urgencyKey.toLowerCase());
+      if (foundUrgencyKey) urgencyHours = slaConfig[foundUrgencyKey];
+    }
+
+    let hours = deptHours || urgencyHours || 24;
+    const deadline = Date.now() + (hours * 60 * 60 * 1000);
+
     const ticket = new Ticket({
       ...req.body,
-      hotel_id: req.user.hotel_id
+      hotel_id: req.user.hotel_id,
+      sla_deadline: req.body.sla_deadline || deadline
     });
     await ticket.save();
 
@@ -59,23 +99,63 @@ exports.updateStatus = async (req, res, next) => {
   try {
     const { ticket_id } = req.params;
     const { status, changed_by, note } = req.body;
-    
+    const userRole = req.user.role;
+
+    const currentTicket = await Ticket.findOne({ ticket_id, hotel_id: req.user.hotel_id });
+    if (!currentTicket) return res.status(404).json({ success: false, error: "Ticket not found" });
+
+    const oldStatus = currentTicket.status;
+
+    // --- State Machine Rules ---
+    // 1. Cannot skip verification
+    if (oldStatus === "In Progress" && status === "Resolved") {
+      return res.status(400).json({ success: false, error: "Tickets must be verified before resolution. Move to 'Pending Verification' first." });
+    }
+
+    // 2. Only GM/Dept Head can resolve
+    if (status === "Resolved" && !["gm", "dept_head"].includes(userRole)) {
+      return res.status(403).json({ success: false, error: "Only management or department heads can verify and resolve tickets." });
+    }
+
+    // 3. Manual Close (GM only)
+    if (status === "Closed" && oldStatus !== "Resolved" && userRole !== "gm") {
+      return res.status(403).json({ success: false, error: "Only the General Manager can manually close tickets." });
+    }
+
     const update = { 
       status, 
       $push: { status_history: { status, changed_by, timestamp: Date.now() } }
     };
 
+    if (status === "In Progress" && !currentTicket.acknowledged_at) {
+      update.acknowledged_at = Date.now();
+    }
+
     if (status === "Resolved") {
       update.resolved_at = Date.now();
       update.resolution_note = note;
+      // Record resolution duration for analytics
+      update.resolution_duration_ms = update.resolved_at - currentTicket.created_at;
     }
-    if (status === "Closed") update.closed_at = Date.now();
+    
+    if (status === "Closed") {
+      update.closed_at = Date.now();
+    }
 
     const ticket = await Ticket.findOneAndUpdate(
       { ticket_id, hotel_id: req.user.hotel_id },
       update,
       { new: true }
     );
+
+    // Sync to Review
+    if (ticket && status === "Resolved" && ticket.review_id) {
+      await Review.findOneAndUpdate(
+        { review_id: ticket.review_id, hotel_id: req.user.hotel_id },
+        { status: "RESOLVED" }
+      );
+    }
+
     res.json({ success: true, data: ticket });
   } catch (err) {
     next(err);
@@ -118,14 +198,15 @@ exports.escalate = async (req, res, next) => {
       const hotel = await Hotel.findById(req.user.hotel_id);
       
       // 2. Fetch GM and Dept Head emails + the current logged-in user
-      const managers = await User.find({
-        hotel_id: req.user.hotel_id,
+      const managers = await Staff.find({
+        hotelId: req.user.hotel_id,
         role: { $in: ["gm", "dept_head"] }
       });
 
       // Combine emails and remove duplicates
       const emailSet = new Set(managers.map(m => m.email));
-      emailSet.add(req.user.email); // Always include the current logged-in manager
+      if (req.user.email) emailSet.add(req.user.email); // Always include the current logged-in manager
+      if (hotel?.contact_email) emailSet.add(hotel.contact_email); // Add the main contact email from hotel profile
       
       const recipientEmails = Array.from(emailSet).join(", ");
       

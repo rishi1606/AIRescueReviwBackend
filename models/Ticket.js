@@ -22,6 +22,7 @@ const ticketSchema = new mongoose.Schema({
   assignee_name: { type: String, default: "Unassigned" },
   created_at: { type: Number },
   sla_deadline: { type: Number },
+  acknowledged_at: { type: Number },
   resolved_at: { type: Number },
   closed_at: { type: Number },
   escalated: { type: Boolean, default: false },
@@ -44,7 +45,10 @@ const ticketSchema = new mongoose.Schema({
     name: String,
     base64: String,
     timestamp: Number
-  }]
+  }],
+  is_flagged: { type: Boolean, default: false },
+  flag_reason: { type: String },
+  resolution_duration_ms: { type: Number }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Ticket", ticketSchema);

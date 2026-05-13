@@ -1,4 +1,4 @@
-const User = require("../models/User");
+const Staff = require("../models/Staff");
 const Hotel = require("../models/Hotel");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -7,46 +7,54 @@ exports.register = async (req, res, next) => {
   try {
     const { name, email, password, role, department, hotel_name } = req.body;
     
-    let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ success: false, error: "User already exists" });
+    let staff = await Staff.findOne({ email });
+    if (staff) return res.status(400).json({ success: false, error: "Staff already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
     // Create Hotel first
     const hotel = new Hotel({
       hotel_name,
-      created_by: null // Will update after user creation
+      created_by: null // Will update after staff creation
     });
     await hotel.save();
 
-    user = new User({
+    staff = new Staff({
       name,
       email,
       password: hashedPassword,
       role,
       department,
-      hotel_id: hotel._id,
+      hotelId: hotel._id,
       avatar_initials: name.split(" ").map(n => n[0]).join("").toUpperCase(),
       onboarding_complete: false
     });
-    await user.save();
+    await staff.save();
 
-    hotel.created_by = user._id;
+    hotel.created_by = staff._id;
     await hotel.save();
 
-    const token = jwt.sign({ id: user._id, hotel_id: hotel._id }, process.env.JWT_SECRET, { expiresIn: "24h" });
+    const token = jwt.sign(
+      { 
+        id: staff._id, 
+        hotel_id: hotel._id,
+        role: staff.role
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: "24h" }
+    );
 
     res.status(201).json({
       success: true,
       data: {
         token,
         user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          hotel_id: user.hotel_id,
-          onboarding_complete: user.onboarding_complete
+          id: staff._id,
+          name: staff.name,
+          email: staff.email,
+          role: staff.role,
+          hotel_id: staff.hotelId,
+          onboarding_complete: staff.onboarding_complete
         }
       }
     });
@@ -58,27 +66,35 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email }).populate("hotel_id");
-    if (!user) return res.status(400).json({ success: false, error: "Invalid email or password" });
+    const staff = await Staff.findOne({ email }).populate("hotelId");
+    if (!staff) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await bcrypt.compare(password, staff.password);
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
-    const token = jwt.sign({ id: user._id, hotel_id: user.hotel_id?._id }, process.env.JWT_SECRET, { expiresIn: "24h" });
+    const token = jwt.sign(
+      { 
+        id: staff._id, 
+        hotel_id: staff.hotelId?._id || staff.hotelId, 
+        role: staff.role 
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: "24h" }
+    );
 
     res.json({
       success: true,
       data: {
         token,
         user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          department: user.department,
-          hotel_id: user.hotel_id?._id,
-          hotel_name: user.hotel_id?.hotel_name,
-          onboarding_complete: user.onboarding_complete
+          id: staff._id,
+          name: staff.name,
+          email: staff.email,
+          role: staff.role,
+          department: staff.department,
+          hotel_id: staff.hotelId?._id || staff.hotelId,
+          hotel_name: staff.hotelId?.hotel_name,
+          onboarding_complete: staff.onboarding_complete
         }
       }
     });
@@ -89,8 +105,8 @@ exports.login = async (req, res, next) => {
 
 exports.getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).populate("hotel_id");
-    res.json({ success: true, data: user });
+    const staff = await Staff.findById(req.user.id).populate("hotelId");
+    res.json({ success: true, data: staff });
   } catch (err) {
     next(err);
   }
@@ -99,14 +115,14 @@ exports.getMe = async (req, res, next) => {
 exports.updateMe = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
-    const user = await User.findById(req.user.id);
+    const staff = await Staff.findById(req.user.id);
     
-    if (name) user.name = name;
-    if (email) user.email = email;
-    if (password) user.password = await bcrypt.hash(password, 10);
+    if (name) staff.name = name;
+    if (email) staff.email = email;
+    if (password) staff.password = await bcrypt.hash(password, 10);
     
-    await user.save();
-    res.json({ success: true, data: user });
+    await staff.save();
+    res.json({ success: true, data: staff });
   } catch (err) {
     next(err);
   }

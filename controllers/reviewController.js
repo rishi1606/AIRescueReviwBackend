@@ -1,5 +1,7 @@
 const Review = require("../models/Review");
 const Hotel = require("../models/Hotel");
+const Staff = require("../models/Staff");
+const Ticket = require("../models/Ticket");
 
 exports.getReviews = async (req, res, next) => {
   try {
@@ -26,7 +28,12 @@ exports.getReviews = async (req, res, next) => {
       ];
     }
 
+    // Fetch Hotel Config for auto-escalation rules
+    const hotel = await Hotel.findById(req.user.hotel_id);
+    const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
+
     const reviews = await Review.find(query).sort({ imported_at: -1 });
+
     res.json({ success: true, data: { reviews, total: reviews.length } });
   } catch (err) {
     next(err);
@@ -58,7 +65,7 @@ exports.importReviews = async (req, res, next) => {
         const newReview = new Review({
           ...r,
           hotel_id: req.user.hotel_id,
-          status: "Pending AI",
+          status: "NEW",
           imported_at: Date.now()
         });
         await newReview.save();
@@ -81,9 +88,25 @@ exports.updateClassification = async (req, res, next) => {
     const threshold = hotel?.ai_confidence_threshold || 75;
 
     const classification = req.body;
-    let status = "Classified";
-    if (classification.is_suspicious) status = "Suspicious";
-    else if (classification.is_factual_only) status = "No Action";
+    let status = "IN REVIEW";
+    
+    // Check auto-escalation rule from hotel config
+    const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
+    const reviewForRating = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    
+    // Status is ESCALATED ONLY if rating is low enough
+    if (reviewForRating?.rating <= escalationThreshold) {
+      status = "ESCALATED";
+    }
+
+    if (reviewForRating?.rating <= 1) {
+      classification.is_suspicious = true;
+      classification.suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
+      status = "ESCALATED";
+    }
+
+    if (classification.is_suspicious) status = "ESCALATED"; // Suspicious reviews are also escalations
+    else if (classification.is_factual_only) status = "CLOSED"; // Factual only need no action
 
     const needs_human_review = classification.confidence < threshold;
 
@@ -106,21 +129,50 @@ exports.updateClassification = async (req, res, next) => {
 exports.approveResponse = async (req, res, next) => {
   try {
     const { review_id } = req.params;
-    const { response_text, response_tone, approved_by } = req.body;
+    const { response_text, response_tone, approved_by, is_submission } = req.body;
     
+    // RBAC: Only GM/Dept Head can approve directly. Staff MUST use is_submission=true.
+    const isApprover = req.user.role === "gm" || req.user.role === "dept_head" || req.user.role === "superadmin";
+    if (!isApprover && !is_submission) {
+      return res.status(403).json({ success: false, error: "Staff role requires Manager approval to post responses." });
+    }
+
+    console.log("APPROVE REQUEST - Review ID:", review_id, "Hotel ID:", req.user.hotel_id, "Is Submission:", is_submission);
+
     const updatedReview = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
       { 
-        status: "Approved",
+        status: is_submission ? "PENDING APPROVAL" : "RESPONDED",
         response_text,
         response_tone,
-        approved_by,
+        submitted_by: is_submission ? approved_by : undefined,
+        approved_by: is_submission ? undefined : approved_by,
         approved_at: Date.now()
       },
       { new: true }
     );
 
+    if (!updatedReview) {
+      console.log("FAILED TO FIND REVIEW FOR UPDATE");
+    } else {
+      console.log("SUCCESSFULLY UPDATED REVIEW:", updatedReview.status);
+    }
+
     res.json({ success: true, data: updatedReview });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.rejectResponse = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const review = await Review.findOneAndUpdate(
+      { review_id, hotel_id: req.user.hotel_id },
+      { status: "IN REVIEW" },
+      { new: true }
+    );
+    res.json({ success: true, data: review });
   } catch (err) {
     next(err);
   }
@@ -135,6 +187,15 @@ exports.flagSuspicious = async (req, res, next) => {
       { is_suspicious: true, status: "Suspicious", suspicious_reason },
       { new: true }
     );
+
+    // Sync to Ticket
+    if (review && review.linked_ticket_id) {
+      await Ticket.findOneAndUpdate(
+        { ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id },
+        { is_flagged: true, flag_reason: suspicious_reason }
+      );
+    }
+
     res.json({ success: true, data: review });
   } catch (err) {
     next(err);
@@ -162,7 +223,7 @@ exports.reanalyse = async (req, res, next) => {
     const review = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
       { 
-        status: "Pending AI",
+        status: "NEW",
         sentiment: null,
         sentiment_reason: null,
         confidence: null,
@@ -186,7 +247,111 @@ exports.reanalyse = async (req, res, next) => {
       },
       { new: true }
     );
+
+    // Sync to Ticket (unflag if re-analysing)
+    if (review && review.linked_ticket_id) {
+      await Ticket.findOneAndUpdate(
+        { ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id },
+        { is_flagged: false, flag_reason: null }
+      );
+    }
+
     res.json({ success: true, data: review });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.assignStaff = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const { staff_id, staff_name } = req.body;
+    const assignee_id = staff_id;
+    const assignee_name = staff_name;
+
+    const review = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    if (!review) return res.status(404).json({ success: false, message: "Review not found" });
+
+    review.assignee_id = assignee_id;
+    review.assignee_name = assignee_name;
+    
+    // Auto-update status to match lifecycle
+    const lifecycleStatuses = ["NEW", "IN REVIEW", "RESPONDED", "CLOSED", "ESCALATED"];
+    if (!lifecycleStatuses.includes(review.status) || review.status === "NEW") {
+      const hotel = await Hotel.findOne({ hotel_id: req.user.hotel_id });
+      const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
+      
+      if (review.rating <= escalationThreshold) {
+        review.status = "ESCALATED";
+      } else {
+        review.status = "IN REVIEW";
+      }
+
+      if (review.rating <= 1) {
+        review.is_suspicious = true;
+        review.suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
+        review.status = "ESCALATED";
+      }
+    }
+    
+    await review.save();
+
+    let ticket;
+    if (review.linked_ticket_id) {
+      ticket = await Ticket.findOneAndUpdate(
+        { ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id },
+        { assignee_id, assignee_name, status: "In Progress" },
+        { new: true }
+      );
+    } else {
+      // Auto-create ticket
+      const hotel = await Hotel.findById(req.user.hotel_id);
+      const slaConfig = hotel?.slaConfig || { high: 4, medium: 24, low: 72 };
+      const deptSla = hotel?.deptSlaConfig || {};
+      
+      const urgencyKey = (review.urgency || "Medium").toLowerCase();
+      const deptName = review.primary_department;
+      
+      // Calculate SLA: Dept override takes priority, then urgency-based
+      // Use case-insensitive lookup for department
+      let deptHours;
+      if (deptName) {
+        const foundDeptKey = Object.keys(deptSla).find(k => k.toLowerCase() === deptName.toLowerCase());
+        if (foundDeptKey) deptHours = deptSla[foundDeptKey];
+      }
+
+      // Also handle case-insensitivity for urgency lookup
+      let urgencyHours;
+      if (urgencyKey) {
+        const foundUrgencyKey = Object.keys(slaConfig).find(k => k.toLowerCase() === urgencyKey.toLowerCase());
+        if (foundUrgencyKey) urgencyHours = slaConfig[foundUrgencyKey];
+      }
+
+      let hours = deptHours || urgencyHours || 24;
+      const deadline = Date.now() + (hours * 60 * 60 * 1000);
+
+      ticket = new Ticket({
+        ticket_id: "TKT-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
+        hotel_id: req.user.hotel_id,
+        review_id: review.review_id,
+        guest_name: review.reviewer_name,
+        review_text: review.review_text,
+        department: review.primary_department,
+        urgency: review.urgency || "Medium",
+        status: "In Progress",
+        assignee_id,
+        assignee_name,
+        created_at: Date.now(),
+        sla_deadline: deadline,
+        status_history: [{ status: "In Progress", changed_by: "Staff Assignment", timestamp: Date.now() }]
+      });
+      await ticket.save();
+
+      review.linked_ticket_id = ticket.ticket_id;
+      await review.save();
+    }
+
+    res.json({ success: true, data: review, ticket });
   } catch (err) {
     next(err);
   }

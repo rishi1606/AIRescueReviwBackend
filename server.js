@@ -11,6 +11,8 @@ const reviewRoutes = require("./routes/reviewRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
+const importRoutes = require("./routes/importRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
@@ -36,6 +38,8 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/import", importRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 // Error Handler
 app.use(errorHandler);

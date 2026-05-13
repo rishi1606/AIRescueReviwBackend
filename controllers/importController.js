@@ -1,0 +1,75 @@
+const Review = require("../models/Review");
+const Ticket = require("../models/Ticket");
+const ImportBatch = require("../models/ImportBatch");
+const csvService = require("../services/csvService");
+const fs = require("fs");
+
+exports.uploadCsv = async (req, res, next) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, message: "No files uploaded" });
+    }
+
+    const hotelId = req.user.hotel_id;
+    const results = [];
+
+    for (const file of req.files) {
+      const batch = await csvService.processCsvFile(file.path, file.originalname, hotelId);
+      results.push(batch);
+      // Clean up uploaded file
+      fs.unlinkSync(file.path);
+    }
+
+    res.json({
+      success: true,
+      message: "CSV files uploaded and processing started in background",
+      batches: results
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getImportHistory = async (req, res, next) => {
+  try {
+    const history = await ImportBatch.find({ hotelId: req.user.hotel_id }).sort({ createdAt: -1 });
+    res.json({ success: true, data: history });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.clearAllData = async (req, res, next) => {
+  try {
+    const hotelId = req.user.hotel_id;
+    await Promise.all([
+      Review.deleteMany({ hotel_id: hotelId }),
+      Ticket.deleteMany({ hotel_id: hotelId }),
+      ImportBatch.deleteMany({ hotelId: hotelId })
+    ]);
+    res.json({ success: true, message: "All hotel data cleared" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.runFullAnalysis = async (req, res, next) => {
+  try {
+    const hotelId = req.user.hotel_id;
+    const reviews = await Review.find({ hotel_id: hotelId });
+    
+    // Process in background
+    csvService.batchAnalyseReviews(reviews, hotelId);
+    
+    res.json({ success: true, message: "Full AI analysis started in background" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getTemplate = (req, res) => {
+  const csv = "review_id,reviewer_name,review_date,rating,review_text,platform,response_text,response_date\nREV001,John Doe,2024-05-10,4,\"Great stay!\",Google,,";
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=reviewrescue_template.csv');
+  res.send(csv);
+};

@@ -1,18 +1,47 @@
 const mongoose = require("mongoose");
 
 const hotelSchema = new mongoose.Schema({
-  hotel_name: { type: String, required: true },
+  hotel_name: { 
+    type: String, 
+    required: true,
+    minlength: 3
+  },
+  city: { type: String },
   address: { type: String },
-  number_of_rooms: { type: String },
+  number_of_rooms: { 
+    type: Number, 
+    required: true 
+  },
   star_category: { type: String },
-  platforms: [String],
-  sla_high: { type: Number, default: 4 },
-  sla_medium: { type: Number, default: 24 },
-  sla_low: { type: Number, default: 72 },
-  ai_confidence_threshold: { type: Number, default: 75 },
-  auto_ticket_threshold: { type: String, default: "High+Medium" },
-  default_response_tone: { type: String, default: "Formal" },
-  created_by: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
+  timezone: { type: String, default: "UTC" },
+  platforms: {
+    type: [String],
+    default: ["Google", "TripAdvisor", "Booking.com", "Yelp"]
+  },
+  contact_email: { type: String }, // For escalations
+  
+  // SLA & AI Settings
+  slaConfig: {
+    high: { type: Number, default: 4 },
+    medium: { type: Number, default: 24 },
+    low: { type: Number, default: 72 }
+  },
+  deptSlaConfig: {
+    "Front Office": { type: Number, default: 4 },
+    "Housekeeping": { type: Number, default: 6 },
+    "Maintenance": { type: Number, default: 4 },
+    "F&B": { type: Number, default: 8 },
+    "Management": { type: Number, default: 24 }
+  },
+  aiConfig: {
+    confidenceThreshold: { type: Number, default: 75 },
+    defaultTone: { type: String, default: "Formal" }, // Formal, Empathetic, Concise
+    autoTicket: { type: Boolean, default: true },
+    escalationAlert: { type: Boolean, default: true },
+    escalationRatingThreshold: { type: Number, default: 2 } // Auto-escalate if rating <= 2
+  },
+  
+  created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Hotel", hotelSchema);
