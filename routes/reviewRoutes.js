@@ -13,5 +13,6 @@ router.post("/:review_id/notes", auth, reviewController.addNote);
 router.put("/:review_id/reanalyse", auth, reviewController.reanalyse);
 router.put("/:review_id/assign-staff", auth, reviewController.assignStaff);
 router.delete("/delete-all", auth, reviewController.deleteAllReviews);
+router.delete("/:review_id", auth, reviewController.deleteReview);
 
 module.exports = router;

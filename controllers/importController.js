@@ -2,7 +2,51 @@ const Review = require("../models/Review");
 const Ticket = require("../models/Ticket");
 const ImportBatch = require("../models/ImportBatch");
 const csvService = require("../services/csvService");
+const scraperService = require("../services/scraperService");
 const fs = require("fs");
+
+exports.scrapeGoogleReviews = async (req, res) => {
+  try {
+    const { url } = req.body;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: 'URL is required'
+      });
+    }
+
+    const result = await scraperService.openGoogleMaps(url);
+
+    return res.json(result);
+
+  } catch (err) {
+    console.error('[Controller Error]', err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+exports.scrapeBookingReviews = async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    console.log(`[Controller] Step 1: Opening browser for Booking: ${url}`);
+    const result = await scraperService.openBookingReviews(url);
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("[Controller] Step 1 Error (Booking):", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 exports.uploadCsv = async (req, res, next) => {
   try {
@@ -57,10 +101,10 @@ exports.runFullAnalysis = async (req, res, next) => {
   try {
     const hotelId = req.user.hotel_id;
     const reviews = await Review.find({ hotel_id: hotelId });
-    
+
     // Process in background
     csvService.batchAnalyseReviews(reviews, hotelId);
-    
+
     res.json({ success: true, message: "Full AI analysis started in background" });
   } catch (err) {
     next(err);

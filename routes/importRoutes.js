@@ -6,6 +6,8 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 
 router.post('/upload', auth, upload.array('files', 10), importController.uploadCsv);
+router.post('/scrape-google', auth, importController.scrapeGoogleReviews);
+router.post('/scrape-booking', auth, importController.scrapeBookingReviews);
 router.get('/history', auth, importController.getImportHistory);
 router.delete('/clear', auth, importController.clearAllData);
 router.post('/analyze-all', auth, importController.runFullAnalysis);

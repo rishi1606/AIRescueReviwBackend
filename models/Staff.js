@@ -11,7 +11,16 @@ const staffSchema = new mongoose.Schema({
   },
   department: { 
     type: String, 
-    enum: ["Front Office", "Maintenance", "F&B", "Housekeeping", "Management"],
+    enum: [
+      "Front Office", "Reservations", "Concierge", "Guest Relations", "Housekeeping", 
+      "Laundry", "Maintenance", "Engineering", "IT Support", "Security", "Valet", 
+      "Parking", "Bell Desk", "Food & Beverage", "Restaurant", "Bar", "Room Service", 
+      "Kitchen", "Banquet", "Events", "Spa", "Gym", "Pool", "Sales", "Marketing", 
+      "Revenue Management", "Finance", "Billing", "Management", "Operations", 
+      "Human Resources", "Airport Shuttle", "Transportation", "WiFi & Internet", 
+      "Facilities", "Cleanliness", "Noise Control", "Accessibility", 
+      "Check-in Experience", "Check-out Experience"
+    ],
     required: true
   },
   hotelId: { type: mongoose.Schema.Types.ObjectId, ref: "Hotel" },

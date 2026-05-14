@@ -49,12 +49,15 @@ exports.importReviews = async (req, res, next) => {
 
     for (let r of reviews) {
       try {
+        let query = { hotel_id: req.user.hotel_id };
+        const orConditions = [{ review_id: r.review_id }];
+        if (r.platform_review_id) {
+          orConditions.push({ platform_review_id: r.platform_review_id });
+        }
+        
         const existing = await Review.findOne({ 
           hotel_id: req.user.hotel_id,
-          $or: [
-            { review_id: r.review_id },
-            { platform_review_id: r.platform_review_id }
-          ]
+          $or: orConditions
         });
 
         if (existing) {
@@ -352,6 +355,18 @@ exports.assignStaff = async (req, res, next) => {
     }
 
     res.json({ success: true, data: review, ticket });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteReview = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    await Review.findOneAndDelete({ review_id, hotel_id: req.user.hotel_id });
+    // Also delete linked ticket if any
+    await Ticket.findOneAndDelete({ review_id, hotel_id: req.user.hotel_id });
+    res.json({ success: true, message: "Review and linked ticket deleted due to analysis failure or user request" });
   } catch (err) {
     next(err);
   }

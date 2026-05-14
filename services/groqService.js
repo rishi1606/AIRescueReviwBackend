@@ -26,7 +26,7 @@ exports.analyseReview = async (text, rating) => {
       
       3. confidence: The final weighted average of the above 4 scores.
       
-      4. primary_department: "Front Office", "Housekeeping", "Maintenance", "F&B", "Security", or "Management"
+      4. primary_department: Pick the most relevant from: ["Front Office", "Reservations", "Concierge", "Guest Relations", "Housekeeping", "Laundry", "Maintenance", "Engineering", "IT Support", "Security", "Valet", "Parking", "Bell Desk", "Food & Beverage", "Restaurant", "Bar", "Room Service", "Kitchen", "Banquet", "Events", "Spa", "Gym", "Pool", "Sales", "Marketing", "Revenue Management", "Finance", "Billing", "Management", "Operations", "Human Resources", "Airport Shuttle", "Transportation", "WiFi & Internet", "Facilities", "Cleanliness", "Noise Control", "Accessibility", "Check-in Experience", "Check-out Experience"]
       5. urgency: "High", "Medium", or "Low"
       6. issues: array of specific issue strings (e.g. ["cold food", "noisy room"]) - PLAIN TEXT ONLY, NO OBJECTS
       7. positive_aspects: array of positive points (e.g. ["friendly staff", "clean pool"]) - PLAIN TEXT ONLY, NO OBJECTS
@@ -45,14 +45,14 @@ exports.analyseReview = async (text, rating) => {
     });
 
     const result = JSON.parse(chatCompletion.choices[0].message.content);
-    
+
     // Ensure numeric confidence for safety
     if (result.confidence_breakdown) {
       const b = result.confidence_breakdown;
       result.confidence = Math.round(
-        (b.sentiment_clarity || 0) * 0.25 + 
-        (b.dept_detection || 0) * 0.25 + 
-        (b.response_quality || 0) * 0.25 + 
+        (b.sentiment_clarity || 0) * 0.25 +
+        (b.dept_detection || 0) * 0.25 +
+        (b.response_quality || 0) * 0.25 +
         (b.data_completeness || 0) * 0.25
       );
     }
