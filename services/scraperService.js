@@ -25,12 +25,12 @@ function removeDuplicateReviews(reviews) {
  */
 
 
-exports.openGoogleMaps = async (url, limit = 30) => {
-  console.log('Launching browser...');
+exports.openGoogleMaps = async (url, limit = 30, headless = false) => {
+  console.log(`Launching browser (Headless: ${headless})...`);
 
   try {
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: headless,
       defaultViewport: null,
       args: [
         '--start-maximized',
@@ -212,14 +212,12 @@ exports.openGoogleMaps = async (url, limit = 30) => {
 /**
  * Step 1: Open Booking.com and click the Reviews tab
  */
-exports.openBookingReviews = async (url, limit = 30) => {
-
-  console.log('Launching browser for Booking...');
+exports.openBookingReviews = async (url, limit = 3, headless = false) => {
+  console.log(`Launching browser for Booking (Headless: ${headless})...`);
 
   try {
-
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: headless,
       defaultViewport: null,
       args: [
         '--start-maximized',
@@ -585,12 +583,12 @@ exports.scrapeGoogleMaps = async (url, maxReviews = 3) => {
 /**
  * Expedia Review Scraper (Open Browser Only for now)
  */
-exports.openExpediaReviews = async (url, limit = 2) => {
-  console.log('Launching browser for Expedia...');
+exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
+  console.log(`Launching browser for Expedia (Headless: ${headless})...`);
 
   try {
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: headless,
       defaultViewport: null,
       args: [
         '--start-maximized',
@@ -599,220 +597,96 @@ exports.openExpediaReviews = async (url, limit = 2) => {
     });
 
     const page = await browser.newPage();
-
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
     console.log(`Opening Expedia URL: ${url}`);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // STEP 1 — Open Expedia page
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
+    // STEP 2 — Click initial Reviews Link to open modal
+    await page.waitForSelector('button[data-stid="reviews-link"]', { visible: true, timeout: 30000 });
+    await page.evaluate(() => {
+      const btn = document.querySelector('button[data-stid="reviews-link"]');
+      if (btn) btn.click();
     });
+    
+    // STEP 3 — Wait for review modal
+    await page.waitForSelector('.uitk-expando-peek-inner', { timeout: 30000 });
+    console.log('Reviews modal loaded');
 
-    console.log('Expedia page fully loaded');
+    // STEP 4 — Pagination Loop (Click "More reviews")
+    let attempts = 0;
+    while (attempts < 10) {
+      const currentCards = await page.$$('.uitk-layout-grid.uitk-layout-grid-has-auto-columns');
+      console.log(`Found ${currentCards.length} review cards...`);
+      
+      if (currentCards.length >= limit) break;
 
-    // STEP 2 — Wait for reviews button
-    // STEP 2 — Wait for reviews button
-    await page.waitForSelector(
-      'button[data-stid="reviews-link"]',
-      {
-        visible: true,
-        timeout: 30000
-      }
-    );
+      const loadMoreBtn = await page.$('#load-more-reviews');
+      if (!loadMoreBtn) break;
 
-    console.log('Reviews button found');
-
-    // STEP 3 — Get button
-    const reviewButton = await page.$(
-      'button[data-stid="reviews-link"]'
-    );
-
-    if (!reviewButton) {
-      throw new Error('Reviews button not found');
+      console.log('Clicking "More reviews" button...');
+      await loadMoreBtn.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+      await new Promise(r => setTimeout(r, 1000));
+      await page.evaluate(() => document.querySelector('#load-more-reviews')?.click());
+      
+      // Wait for new content
+      await new Promise(r => setTimeout(r, 4000));
+      attempts++;
     }
 
-    // STEP 4 — Scroll button into view
-    await reviewButton.evaluate(el => {
-      el.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center'
-      });
-    });
-
-    // Small wait after scroll
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // STEP 5 — Click using JS
-    await page.evaluate(() => {
-      const btn = document.querySelector(
-        'button[data-stid="reviews-link"]'
-      );
-
-      if (btn) {
-        btn.click();
-      }
-    });
-
-    console.log('Clicked See all reviews');
-
-    // STEP 6 — Wait for review modal/content
-    await page.waitForSelector(
-      '.uitk-expando-peek-inner',
-      {
-        timeout: 30000
-      }
-    );
-
-    console.log('Reviews loaded');
-
-    console.log('Clicked See all reviews');
-
-    // STEP 4 — Wait for review cards
-    await page.waitForSelector(
-      '.uitk-layout-grid.uitk-layout-grid-has-auto-columns',
-      { timeout: 30000 }
-    );
-
-    // Small delay
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // STEP 5 — Extract reviews
-    // STEP 5 — Extract reviews
-    const reviewCards = await page.$$(
-      '.uitk-layout-grid.uitk-layout-grid-has-auto-columns'
-    );
-
+    // STEP 5 — Final Extraction
+    const reviewCards = await page.$$('.uitk-layout-grid.uitk-layout-grid-has-auto-columns');
     const uniqueReviews = new Set();
     const reviews = [];
 
     for (const card of reviewCards) {
-
       try {
+        const reviewerName = await card.$eval('h4.uitk-heading.uitk-heading-7', el => el.innerText.trim()).catch(() => '');
+        
+        // Filters
+        if (!reviewerName || reviewerName.length > 30 || reviewerName.includes('policy')) continue;
 
-        // SCROLL CARD INTO VIEW
-        await card.evaluate(el => {
-          el.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center'
-          });
-        });
-
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // REVIEWER NAME
-        const reviewerName = await card.$eval(
-          'h4.uitk-heading.uitk-heading-7',
-          el => el.innerText.trim()
-        ).catch(() => '');
-
-        // STRICT FILTERS
-        if (
-          !reviewerName ||
-          reviewerName === 'What guests liked' ||
-          reviewerName === 'Cancellation policy' ||
-          reviewerName.includes('Liked:') ||
-          reviewerName.length > 30
-        ) {
-          continue;
-        }
-
-        // RATING
-        const ratingText = await card.$eval(
-          'h3.uitk-heading',
-          el => el.innerText.trim()
-        ).catch(() => '');
-
-        const rating =
-          parseFloat(ratingText.split('/')[0]) || null;
-
-        // REVIEW DATE
-        const reviewDate = await card.$$eval(
-          '.uitk-text',
-          els => {
-
+        const ratingText = await card.$eval('h3.uitk-heading', el => el.innerText.trim()).catch(() => '');
+        const rating = parseFloat(ratingText.split('/')[0]) || null;
+        
+        const reviewDate = await card.$$eval('.uitk-text', els => {
             const found = els.find(el => {
               const text = el.innerText.trim();
-
-              return (
-                text.includes('2026') ||
-                text.includes('2025')
-              );
+              return text.includes('2026') || text.includes('2025') || text.includes('2024');
             });
+            return found ? found.innerText.trim() : '';
+        }).catch(() => '');
 
-            return found
-              ? found.innerText.trim()
-              : '';
-          }
-        ).catch(() => '');
+        const reviewText = await card.$eval('.uitk-expando-peek-inner .uitk-text', el => el.innerText.trim()).catch(() => '');
+        if (!reviewText) continue;
 
-        // REVIEW TEXT
-        const reviewText = await card.$eval(
-          '.uitk-expando-peek-inner .uitk-text',
-          el => el.innerText.trim()
-        ).catch(() => '');
-
-        // SKIP EMPTY
-        if (!reviewText) {
-          continue;
-        }
-
-        // UNIQUE CHECK
-        const uniqueKey =
-          reviewerName + reviewText;
-
-        if (uniqueReviews.has(uniqueKey)) {
-          continue;
-        }
-
+        const uniqueKey = reviewerName + reviewText;
+        if (uniqueReviews.has(uniqueKey)) continue;
         uniqueReviews.add(uniqueKey);
 
-        reviews.push({
-          reviewerName,
-          rating,
-          reviewDate,
-          reviewText
-        });
-
-        // LIMIT
-        if (reviews.length >= limit) {
-          break;
-        }
-
-      } catch (e) { }
+        reviews.push({ reviewerName, rating, reviewDate, reviewText });
+        if (reviews.length >= limit) break;
+      } catch (e) {}
     }
 
-    console.log(
-      'Expedia Reviews Extracted:',
-      reviews
-    );
-
-    console.log('Expedia Reviews Extracted:', reviews);
-
-    return {
-      success: true,
-      totalReviews: reviews.length,
-      reviews
-    };
+    console.log(`Extracted ${reviews.length} unique Expedia reviews.`);
+    return { success: true, totalReviews: reviews.length, reviews };
 
   } catch (err) {
     console.error('Expedia Scraper Error:', err);
-    throw err;
+    return { success: false, message: err.message };
   }
 };
 
 /**
  * Agoda Review Scraper (Open Browser Only for now)
  */
-exports.openAgodaReviews = async (url, limit = 3) => {
-  console.log('Launching browser for Agoda...');
+exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
+  console.log(`Launching browser for Agoda (Headless: ${headless})...`);
 
   try {
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: headless,
       defaultViewport: null,
       args: [
         '--start-maximized',
@@ -821,186 +695,112 @@ exports.openAgodaReviews = async (url, limit = 3) => {
     });
 
     const page = await browser.newPage();
-
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
     console.log(`Opening Agoda URL: ${url}`);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-
-    console.log('Agoda page fully loaded');
-
-    // STEP 1 — Wait for Read all reviews
-    await page.waitForSelector(
-      'span[label="Read all reviews"]',
-      {
-        visible: true,
-        timeout: 30000
+    // STEP 1 — Scroll down to find reviews section
+    console.log('Scrolling to find reviews section...');
+    let foundReviews = false;
+    for (let i = 0; i < 15; i++) {
+      await page.evaluate(() => window.scrollBy(0, 800));
+      await new Promise(r => setTimeout(r, 1000));
+      
+      const cards = await page.$$('div[data-element-name="review-comment"]');
+      if (cards.length > 0) {
+        foundReviews = true;
+        console.log('Reviews section found on main page.');
+        break;
       }
-    );
-
-    console.log('Read all reviews button found');
-
-    // STEP 2 — Scroll button into view
-    await page.evaluate(() => {
-      const btn = document.querySelector(
-        'span[label="Read all reviews"]'
-      );
-
-      if (btn) {
-        btn.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
-        });
-      }
-    });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // STEP 3 — Click Read all reviews
-    await page.evaluate(() => {
-      const btn = document.querySelector(
-        'span[label="Read all reviews"]'
-      );
-
-      if (btn) {
-        btn.click();
-      }
-    });
-
-    console.log('Clicked Read all reviews');
-
-    // STEP 4 — Wait for reviews modal/content
-    await page.waitForSelector(
-      'div[data-element-name="review-comment"]',
-      {
-        visible: true,
-        timeout: 30000
-      }
-    );
-
-    console.log('Reviews loaded');
-
-    // STEP 5 — Scroll down slowly to load more reviews
-    for (let i = 0; i < 5; i++) {
-
-      await page.evaluate(() => {
-        window.scrollBy(0, window.innerHeight);
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    // STEP 6 — Extract reviews
-    const reviews = await page.$$eval(
-      'div[data-element-name="review-comment"]',
-      (cards, limit) => {
+    if (!foundReviews) {
+      console.log('Could not find reviews on main page. Attempting one final deep scroll...');
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+      await new Promise(r => setTimeout(r, 3000));
+    }
 
-        const uniqueReviews = new Set();
-        const results = [];
+    let allCollectedReviews = [];
+    let currentPage = 1;
+    const uniqueReviews = new Set();
 
-        for (const card of cards) {
+    // PAGINATION LOOP
+    while (allCollectedReviews.length < limit && currentPage < 10) {
+      console.log(`Extracting Agoda reviews from page ${currentPage}...`);
+      
+      // Wait for content
+      await new Promise(r => setTimeout(r, 3000));
 
-          try {
+      // Extract current page reviews
+      const pageReviews = await page.$$eval('div[data-element-name="review-comment"]', (cards) => {
+        return cards.map(card => {
+            // Reviewer Name (e.g., "lisa from United States")
+            const reviewerName = card.querySelector('[data-info-type="reviewer-name"] strong')?.innerText?.trim() || 
+                               card.querySelector('.Review-comment-reviewer span')?.innerText?.trim() || '';
+            
+            // Rating (e.g., "8.4")
+            const ratingText = card.querySelector('.Review-comment-leftScore')?.innerText?.trim() || '';
+            const rating = parseFloat(ratingText) || null;
+            
+            // Review Date
+            const reviewDate = card.querySelector('.Review-statusBar-left span')?.innerText?.trim() || '';
+            
+            // Review Title
+            const reviewTitle = card.querySelector('[data-testid="review-title"]')?.innerText?.trim() || '';
+            
+            // Review Text
+            const reviewTextOnly = card.querySelector('[data-testid="review-comment"]')?.innerText?.trim() || '';
+            const reviewText = `${reviewTitle} ${reviewTextOnly}`.trim();
+            
+            return { reviewerName, rating, reviewDate, reviewText };
+        });
+      });
 
-            // REVIEWER NAME
-            const reviewerName =
-              card.querySelector(
-                '[data-info-type="reviewer-name"] strong'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            if (!reviewerName) continue;
-
-            // RATING
-            const ratingText =
-              card.querySelector(
-                '.Review-comment-leftScore'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            const rating =
-              parseFloat(ratingText) || null;
-
-            // REVIEW DATE
-            const reviewDate =
-              card.querySelector(
-                '.Review-statusBar-left span'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            // REVIEW TITLE
-            const reviewTitle =
-              card.querySelector(
-                '[data-testid="review-title"]'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            // REVIEW TEXT
-            const reviewTextOnly =
-              card.querySelector(
-                '[data-testid="review-comment"]'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            // COMBINE TITLE + REVIEW
-            const reviewText =
-              `${reviewTitle} ${reviewTextOnly}`.trim();
-
-            if (!reviewText) continue;
-
-            // UNIQUE KEY
-            const uniqueKey =
-              reviewerName + reviewText;
-
-            // SKIP DUPLICATES
-            if (uniqueReviews.has(uniqueKey)) {
-              continue;
-            }
-
-            uniqueReviews.add(uniqueKey);
-
-            results.push({
-              reviewerName,
-              rating,
-              reviewDate,
-              reviewText
-            });
-
-            // LIMIT
-            if (results.length >= limit) {
-              break;
-            }
-
-          } catch (e) { }
+      // Filter and Add
+      for (const r of pageReviews) {
+        if (!r.reviewerName || !r.reviewText) continue;
+        const key = r.reviewerName + r.reviewText;
+        if (!uniqueReviews.has(key)) {
+          uniqueReviews.add(key);
+          allCollectedReviews.push(r);
         }
+      }
 
-        return results;
-      },
-      limit
-    );
+      console.log(`Total Agoda reviews so far: ${allCollectedReviews.length}`);
+      if (allCollectedReviews.length >= limit) break;
 
-    console.log('Agoda Reviews Extracted:', reviews);
+      // Click Next Page (Numeric Button on Main Page)
+      currentPage++;
+      const clicked = await page.evaluate((nextPage) => {
+        const buttons = Array.from(document.querySelectorAll('button p, button span'));
+        const target = buttons.find(el => el.innerText.trim() === String(nextPage));
+        if (target) {
+          const btn = target.closest('button');
+          if (btn) {
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            btn.click();
+            return true;
+          }
+        }
+        return false;
+      }, currentPage);
 
-    return {
-      success: true,
-      totalReviews: reviews.length,
-      reviews
-    };
+      if (!clicked) {
+        console.log(`Could not find button for page ${currentPage}. stopping.`);
+        break;
+      }
+
+      // Wait for page load
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    console.log(`Agoda Sync Finished. Total: ${allCollectedReviews.length}`);
+    return { success: true, totalReviews: allCollectedReviews.length, reviews: allCollectedReviews.slice(0, limit) };
 
   } catch (err) {
     console.error('Agoda Scraper Error:', err);
-    throw err;
+    return { success: false, message: err.message };
   }
 };
 
