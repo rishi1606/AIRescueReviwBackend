@@ -20,7 +20,7 @@ const initCronJobs = () => {
   });
 
   // 2. Schedule: Agoda at 3:52 PM IST daily (Testing)
-  cron.schedule('52 15 * * *', async () => {
+  cron.schedule('15 16 * * *', async () => {
     console.log('[Cron] Triggering daily Agoda review sync...');
     await runAgodaScrape();
   });
@@ -166,7 +166,7 @@ const runGoogleScrape = async () => {
  */
 const runAIWorker = async () => {
   const { analyseReview } = require('./groqService');
-  
+
   try {
     // 1. Fetch 3-5 pending reviews
     const pendingReviews = await Review.find({ status: "Pending AI" }).limit(5);
@@ -193,7 +193,7 @@ const runAIWorker = async () => {
         review.suggested_reply = aiResult.suggested_reply;
         review.confidence = aiResult.confidence;
         review.needs_human_review = aiResult.needs_human_review;
-        
+
         // Finalize status
         review.status = "Classified";
         review.classified_at = Date.now();
@@ -203,7 +203,7 @@ const runAIWorker = async () => {
       } else {
         console.warn(`[AI Worker] AI Analysis failed for ${review.review_id}`);
         // Optionally mark as failed or retry later
-        review.status = "AI Failed"; 
+        review.status = "AI Failed";
         await review.save();
       }
     }

@@ -4,8 +4,6 @@ const apiKey = process.env.GROQ_API_KEY;
 let groq;
 if (apiKey) {
   groq = new Groq({ apiKey });
-} else {
-  console.warn("WARNING: GROQ_API_KEY is missing. AI features will be disabled.");
 }
 
 exports.analyseReview = async (text, rating) => {
@@ -17,21 +15,13 @@ exports.analyseReview = async (text, rating) => {
 
       Requirements:
       1. sentiment: "Positive", "Negative", "Neutral", or "Mixed"
-      
-      2. confidence_breakdown: Calculate 0-100 scores for these 4 areas (25% weight each):
-         - sentiment_clarity: Language clarity, lack of sarcasm/mixed signals.
-         - dept_detection: How clearly it maps to one specific department.
-         - response_quality: How relevant a potential response would be to this context.
-         - data_completeness: Length of text and presence of rating.
-      
-      3. confidence: The final weighted average of the above 4 scores.
-      
-      4. primary_department: Pick the most relevant from: ["Front Office", "Reservations", "Concierge", "Guest Relations", "Housekeeping", "Laundry", "Maintenance", "Engineering", "IT Support", "Security", "Valet", "Parking", "Bell Desk", "Food & Beverage", "Restaurant", "Bar", "Room Service", "Kitchen", "Banquet", "Events", "Spa", "Gym", "Pool", "Sales", "Marketing", "Revenue Management", "Finance", "Billing", "Management", "Operations", "Human Resources", "Airport Shuttle", "Transportation", "WiFi & Internet", "Facilities", "Cleanliness", "Noise Control", "Accessibility", "Check-in Experience", "Check-out Experience"]
-      5. urgency: "High", "Medium", or "Low"
-      6. issues: array of specific issue strings (e.g. ["cold food", "noisy room"]) - PLAIN TEXT ONLY, NO OBJECTS
-      7. positive_aspects: array of positive points (e.g. ["friendly staff", "clean pool"]) - PLAIN TEXT ONLY, NO OBJECTS
-      8. suggested_reply: A draft reply to the guest
-      9. needs_human_review: Set to true if final confidence < 75 or sentiment is highly complex.
+      2. confidence: Calculate a score from 0-100
+      3. primary_department: Pick one: ["Front Office", "Housekeeping", "Maintenance", "Food & Beverage", "Spa", "Management", "Facilities"]
+      4. urgency: "High", "Medium", or "Low"
+      5. issues: array of strings
+      6. positive_aspects: array of strings
+      7. suggested_reply: A draft reply
+      8. needs_human_review: boolean
 
       Format: JSON only.
     `;
@@ -44,20 +34,7 @@ exports.analyseReview = async (text, rating) => {
       response_format: { type: "json_object" }
     });
 
-    const result = JSON.parse(chatCompletion.choices[0].message.content);
-
-    // Ensure numeric confidence for safety
-    if (result.confidence_breakdown) {
-      const b = result.confidence_breakdown;
-      result.confidence = Math.round(
-        (b.sentiment_clarity || 0) * 0.25 +
-        (b.dept_detection || 0) * 0.25 +
-        (b.response_quality || 0) * 0.25 +
-        (b.data_completeness || 0) * 0.25
-      );
-    }
-
-    return result;
+    return JSON.parse(chatCompletion.choices[0].message.content);
   } catch (err) {
     console.error("Groq AI Error:", err);
     return null;

@@ -85,7 +85,10 @@ exports.createTicket = async (req, res, next) => {
     if (ticket.review_id) {
       await Review.findOneAndUpdate(
         { review_id: ticket.review_id, hotel_id: req.user.hotel_id },
-        { linked_ticket_id: ticket.ticket_id }
+        { 
+          linked_ticket_id: ticket.ticket_id,
+          status: "IN REVIEW" // Mark as active/in-progress
+        }
       );
     }
 

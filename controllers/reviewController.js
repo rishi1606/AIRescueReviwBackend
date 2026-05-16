@@ -110,7 +110,7 @@ exports.updateClassification = async (req, res, next) => {
       status = "Suspicious";
     } else if (review.rating <= escalationThreshold) {
       status = "ESCALATED";
-    } else if (extraction.is_factual_only) {
+    } else if (extraction.is_factual_only && !review.linked_ticket_id) {
       status = "CLOSED";
     }
 
