@@ -87,43 +87,53 @@ exports.importReviews = async (req, res, next) => {
 exports.updateClassification = async (req, res, next) => {
   try {
     const { review_id } = req.params;
-    const hotel = await Hotel.findOne({ hotel_id: req.user.hotel_id });
-    const threshold = hotel?.ai_confidence_threshold || 75;
+    const hotel = await Hotel.findById(req.user.hotel_id);
+    const extraction = req.body; // AI extracted sentiment, issues, department
 
-    const classification = req.body;
+    // Step 2 — Backend Logic Implementation
+    const review = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    if (!review) return res.status(404).json({ success: false, message: "Review not found" });
+
+    // 1. Determine Urgency based on sentiment and rating
+    let urgency = "Low";
+    if (extraction.sentiment === "Negative") {
+      urgency = review.rating <= 2 ? "High" : "Medium";
+    } else if (extraction.sentiment === "Mixed") {
+      urgency = "Medium";
+    }
+
+    // 2. Determine Status based on Hotel escalation rules & AI flags
+    const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
     let status = "IN REVIEW";
     
-    // Check auto-escalation rule from hotel config
-    const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
-    const reviewForRating = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
-    
-    // Status is ESCALATED ONLY if rating is low enough
-    if (reviewForRating?.rating <= escalationThreshold) {
+    if (extraction.is_suspicious) {
+      status = "Suspicious";
+    } else if (review.rating <= escalationThreshold) {
       status = "ESCALATED";
+    } else if (extraction.is_factual_only) {
+      status = "CLOSED";
     }
 
-    if (reviewForRating?.rating <= 1) {
-      classification.is_suspicious = true;
-      classification.suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
-      status = "ESCALATED";
-    }
+    // 3. Calculate Confidence (deterministic backend logic)
+    const confidence = extraction.primary_department && extraction.sentiment ? 95 : 70;
 
-    if (classification.is_suspicious) status = "ESCALATED"; // Suspicious reviews are also escalations
-    else if (classification.is_factual_only) status = "CLOSED"; // Factual only need no action
+    // 4. Validate & Store
+    const classificationPayload = {
+      ...extraction,
+      urgency,
+      confidence,
+      status,
+      needs_human_review: confidence < (hotel?.aiConfig?.confidenceThreshold || 75),
+      classified_at: Date.now()
+    };
 
-    const needs_human_review = classification.confidence < threshold;
-
-    const review = await Review.findOneAndUpdate(
+    const updatedReview = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
-      { 
-        ...classification, 
-        status, 
-        needs_human_review,
-        classified_at: Date.now() 
-      },
+      { ...classificationPayload },
       { new: true }
     );
-    res.json({ success: true, data: review });
+
+    res.json({ success: true, data: updatedReview });
   } catch (err) {
     next(err);
   }

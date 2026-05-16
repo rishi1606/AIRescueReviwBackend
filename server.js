@@ -13,6 +13,7 @@ const staffRoutes = require("./routes/staffRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
 const importRoutes = require("./routes/importRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const { initCronJobs } = require("./services/cronService");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
@@ -45,4 +46,8 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  // Initialize cron jobs
+  initCronJobs();
+});

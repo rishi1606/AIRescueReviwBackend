@@ -48,6 +48,78 @@ exports.scrapeBookingReviews = async (req, res, next) => {
   }
 };
 
+exports.scrapeExpediaReviews = async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    console.log(`[Controller] Opening browser for Expedia: ${url}`);
+    const result = await scraperService.openExpediaReviews(url);
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("[Controller] Error (Expedia):", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.scrapeAgodaReviews = async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    console.log(`[Controller] Opening browser for Agoda: ${url}`);
+    const result = await scraperService.openAgodaReviews(url);
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("[Controller] Error (Agoda):", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.scrapeHotelsReviews = async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    console.log(`[Controller] Opening browser for Hotels.com: ${url}`);
+    const result = await scraperService.openHotelsReviews(url);
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("[Controller] Error (Hotels.com):", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.scrapeAirbnbReviews = async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    console.log(`[Controller] Opening browser for Airbnb: ${url}`);
+    const result = await scraperService.openAirbnbReviews(url);
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("[Controller] Error (Airbnb):", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.uploadCsv = async (req, res, next) => {
   try {
     if (!req.files || req.files.length === 0) {
