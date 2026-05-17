@@ -10,48 +10,76 @@ const EXPEDIA_URL = "https://www.expedia.co.in/Indianapolis-Hotels-Ramada-By-Wyn
 const AGODA_URL = "https://www.agoda.com/en-in/waterfront-hotel-and-conference-center-airport/hotel/indianapolis-in-us.html?countryId=181&finalPriceView=1&isShowMobileAppPrice=false&cid=1922885&numberOfBedrooms=&familyMode=false&adults=2&children=0&rooms=1&maxRooms=0&checkIn=2026-05-31&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&tag=6f147157-60b8-459f-af1a-9935d44970e9&flightSearchCriteria=%5Bobject+Object%5D&los=16&searchrequestid=052606c2-1e4e-48ea-8796-9fe0a0e89bc4&ds=gFkJ%2FbUlb9r5KgZw";
 
 /**
+ * Scrapes all 4 platforms and saves only reviews within the given rating range
+ */
+const scrapeAllPlatforms = async (tierName, minRating, maxRating) => {
+  console.log(`[${tierName}] Scraping all platforms for ${minRating}-${maxRating} star reviews...`);
+
+  await runBookingScrape(minRating, maxRating);
+  await runGoogleScrape(minRating, maxRating);
+  await runExpediaScrape(minRating, maxRating);
+  await runAgodaScrape(minRating, maxRating);
+
+  console.log(`[${tierName}] Scraping cycle complete.`);
+};
+
+/**
  * Initializes the cron jobs for automatic review acquisition and AI processing
  */
 const initCronJobs = () => {
-  // 1. AI Worker: Processes pending reviews every minute
+  // ═══════════════════════════════════════════
+  // AI Worker: Processes "Pending AI" reviews every minute
+  // ═══════════════════════════════════════════
   cron.schedule('* * * * *', async () => {
     console.log('[AI Worker] Checking for pending reviews...');
     await runAIWorker();
   });
 
-  // 2. Schedule: Agoda at 3:52 PM IST daily (Testing)
-  cron.schedule('15 16 * * *', async () => {
-    console.log('[Cron] Triggering daily Agoda review sync...');
-    await runAgodaScrape();
+  // ═══════════════════════════════════════════
+  // CRON 1 — HIGH URGENCY (1-2 star reviews)
+  // Schedule: Every 30 minutes
+  // Reason : Angry guest. Every minute matters.
+  // ═══════════════════════════════════════════
+  cron.schedule('*/30 * * * *', async () => {
+    await scrapeAllPlatforms('HIGH URGENCY', 1, 2);
   });
 
-  // Schedule: Expedia at 3:47 PM IST daily
-  cron.schedule('47 15 * * *', async () => {
-    console.log('[Cron] Triggering daily Expedia review sync...');
-    await runExpediaScrape();
+  // ═══════════════════════════════════════════
+  // CRON 2 — MEDIUM URGENCY (3 star reviews)
+  // Schedule: Every 4 hours
+  // Reason : Neutral reviews need response but not instant.
+  // ═══════════════════════════════════════════
+  cron.schedule('0 */4 * * *', async () => {
+    await scrapeAllPlatforms('MEDIUM URGENCY', 3, 3);
   });
 
-  // Schedule: Booking.com at 3:17 PM IST daily
-  cron.schedule('17 15 * * *', async () => {
-    console.log('[Cron] Triggering daily Booking.com review sync...');
-    await runBookingScrape();
+  // ═══════════════════════════════════════════
+  // CRON 3 — LOW URGENCY (4-5 star reviews)
+  // Schedule: Every 8 hours
+  // Reason : Positive reviews. GM can reply during business hours.
+  // ═══════════════════════════════════════════
+  cron.schedule('0 */8 * * *', async () => {
+    await scrapeAllPlatforms('LOW URGENCY', 4, 5);
   });
 
-  // Schedule: Google Maps at 3:18 PM IST daily
-  cron.schedule('18 15 * * *', async () => {
-    console.log('[Cron] Triggering daily Google Maps review sync...');
-    await runGoogleScrape();
-  });
-
-  console.log('[Cron] All scrapers scheduled (Booking, Google, Expedia, Agoda).');
+  console.log('[Cron] Tiered scraper crons registered:');
+  console.log('  HIGH   (1-2★) → Every 30 minutes');
+  console.log('  MEDIUM (3★)   → Every 4 hours');
+  console.log('  LOW    (4-5★) → Every 8 hours');
 };
 
 /**
  * Common logic to save unique reviews to DB
+ * @param {Object} hotel - Hotel document
+ * @param {Array} reviews - Raw scraped reviews
+ * @param {String} platform - Platform name
+ * @param {Number} minRating - Min star rating to save (1-5 scale)
+ * @param {Number} maxRating - Max star rating to save (1-5 scale)
  */
-const saveUniqueReviews = async (hotel, reviews, platform) => {
+const saveUniqueReviews = async (hotel, reviews, platform, minRating = 1, maxRating = 5) => {
   let newCount = 0;
   let duplicateCount = 0;
+  let skippedByRating = 0;
 
   for (const raw of reviews) {
     if (!raw.reviewText || raw.reviewText.trim() === "") {
@@ -62,9 +90,16 @@ const saveUniqueReviews = async (hotel, reviews, platform) => {
     const uniqueString = `${platform}_${raw.reviewerName}_${raw.reviewText}`;
     const review_id = crypto.createHash('md5').update(uniqueString).digest('hex');
 
+    // Normalise rating: Booking/Agoda use 1-10 scale → convert to 1-5
     let rating = raw.rating;
     if (rating > 5) {
       rating = Math.round((rating / 2) * 10) / 10;
+    }
+
+    // Filter by rating range for this urgency tier
+    if (rating < minRating || rating > maxRating) {
+      skippedByRating++;
+      continue;
     }
 
     const exists = await Review.findOne({ review_id });
@@ -86,21 +121,21 @@ const saveUniqueReviews = async (hotel, reviews, platform) => {
       duplicateCount++;
     }
   }
-  return { newCount, duplicateCount };
+  return { newCount, duplicateCount, skippedByRating };
 };
 
 /**
  * Agoda Scrape Task
  */
-const runAgodaScrape = async () => {
+const runAgodaScrape = async (minRating = 1, maxRating = 5) => {
   const { openAgodaReviews } = require('./scraperService');
   try {
     const hotel = await Hotel.findOne();
     if (!hotel) return console.error('[Cron] No hotel found for Agoda sync.');
     const result = await openAgodaReviews(AGODA_URL, 20, false);
     if (result.success && result.reviews) {
-      const stats = await saveUniqueReviews(hotel, result.reviews, "Agoda");
-      console.log(`[Cron] Agoda Sync: New: ${stats.newCount}, Skipped: ${stats.duplicateCount}`);
+      const stats = await saveUniqueReviews(hotel, result.reviews, "Agoda", minRating, maxRating);
+      console.log(`[Cron] Agoda Sync (${minRating}-${maxRating}★): New: ${stats.newCount}, Dupes: ${stats.duplicateCount}, Filtered: ${stats.skippedByRating}`);
     }
   } catch (err) {
     console.error('[Cron] Agoda Sync Error:', err);
@@ -110,15 +145,15 @@ const runAgodaScrape = async () => {
 /**
  * Expedia Scrape Task
  */
-const runExpediaScrape = async () => {
+const runExpediaScrape = async (minRating = 1, maxRating = 5) => {
   const { openExpediaReviews } = require('./scraperService');
   try {
     const hotel = await Hotel.findOne();
     if (!hotel) return console.error('[Cron] No hotel found for Expedia sync.');
     const result = await openExpediaReviews(EXPEDIA_URL, 20, false);
     if (result.success && result.reviews) {
-      const stats = await saveUniqueReviews(hotel, result.reviews, "Expedia");
-      console.log(`[Cron] Expedia Sync: New: ${stats.newCount}, Skipped: ${stats.duplicateCount}`);
+      const stats = await saveUniqueReviews(hotel, result.reviews, "Expedia", minRating, maxRating);
+      console.log(`[Cron] Expedia Sync (${minRating}-${maxRating}★): New: ${stats.newCount}, Dupes: ${stats.duplicateCount}, Filtered: ${stats.skippedByRating}`);
     }
   } catch (err) {
     console.error('[Cron] Expedia Sync Error:', err);
@@ -128,15 +163,15 @@ const runExpediaScrape = async () => {
 /**
  * Booking.com Scrape Task
  */
-const runBookingScrape = async () => {
+const runBookingScrape = async (minRating = 1, maxRating = 5) => {
   const { openBookingReviews } = require('./scraperService');
   try {
     const hotel = await Hotel.findOne();
     if (!hotel) return console.error('[Cron] No hotel found for Booking sync.');
     const result = await openBookingReviews(BOOKING_URL, 20, true);
     if (result.success && result.reviews) {
-      const stats = await saveUniqueReviews(hotel, result.reviews, "Booking.com");
-      console.log(`[Cron] Booking.com Sync: New: ${stats.newCount}, Skipped: ${stats.duplicateCount}`);
+      const stats = await saveUniqueReviews(hotel, result.reviews, "Booking.com", minRating, maxRating);
+      console.log(`[Cron] Booking.com Sync (${minRating}-${maxRating}★): New: ${stats.newCount}, Dupes: ${stats.duplicateCount}, Filtered: ${stats.skippedByRating}`);
     }
   } catch (err) {
     console.error('[Cron] Booking Sync Error:', err);
@@ -146,15 +181,15 @@ const runBookingScrape = async () => {
 /**
  * Google Maps Scrape Task
  */
-const runGoogleScrape = async () => {
+const runGoogleScrape = async (minRating = 1, maxRating = 5) => {
   const { openGoogleMaps } = require('./scraperService');
   try {
     const hotel = await Hotel.findOne();
     if (!hotel) return console.error('[Cron] No hotel found for Google sync.');
     const result = await openGoogleMaps(GOOGLE_MAPS_URL, 15, true);
     if (result.success && result.reviews) {
-      const stats = await saveUniqueReviews(hotel, result.reviews, "Google");
-      console.log(`[Cron] Google Maps Sync: New: ${stats.newCount}, Skipped: ${stats.duplicateCount}`);
+      const stats = await saveUniqueReviews(hotel, result.reviews, "Google", minRating, maxRating);
+      console.log(`[Cron] Google Sync (${minRating}-${maxRating}★): New: ${stats.newCount}, Dupes: ${stats.duplicateCount}, Filtered: ${stats.skippedByRating}`);
     }
   } catch (err) {
     console.error('[Cron] Google Sync Error:', err);
@@ -162,53 +197,73 @@ const runGoogleScrape = async () => {
 };
 
 /**
- * AI Worker Task: Processes a batch of reviews marked as "Pending AI"
+ * AI Worker Task: Batch-processes reviews marked as "Pending AI"
+ * BATCH SIZE: 5 reviews per API call (hard rule)
+ * DELAY: 2000ms between batches (Groq rate limit: 30 req/min)
  */
+const BATCH_SIZE = 5;
+const BATCH_DELAY_MS = 2000;
+
 const runAIWorker = async () => {
-  const { analyseReview } = require('./groqService');
+  const { analyseBatch } = require('./groqService');
 
   try {
-    // 1. Fetch 3-5 pending reviews
-    const pendingReviews = await Review.find({ status: "Pending AI" }).limit(5);
+    // Fetch ALL pending reviews
+    const pendingReviews = await Review.find({ status: "Pending AI" });
 
     if (pendingReviews.length === 0) {
-      console.log('[AI Worker] No pending reviews to process.');
       return;
     }
 
-    console.log(`[AI Worker] Processing batch of ${pendingReviews.length} reviews...`);
+    console.log(`[AI Worker] Found ${pendingReviews.length} pending reviews. Processing in batches of ${BATCH_SIZE}...`);
 
-    for (const review of pendingReviews) {
-      console.log(`[AI Worker] Analyzing review ${review.review_id} from ${review.platform}...`);
+    // Split into chunks of 5
+    const batches = [];
+    for (let i = 0; i < pendingReviews.length; i += BATCH_SIZE) {
+      batches.push(pendingReviews.slice(i, i + BATCH_SIZE));
+    }
 
-      const aiResult = await analyseReview(review.review_text, review.rating);
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      console.log(`[AI Worker] Batch ${b + 1}/${batches.length} (${batch.length} reviews)...`);
 
-      if (aiResult) {
-        // Update review with AI insights
-        review.sentiment = aiResult.sentiment;
-        review.primary_department = aiResult.primary_department;
-        review.urgency = aiResult.urgency;
-        review.issues = aiResult.issues || [];
-        review.positive_aspects = aiResult.positive_aspects || [];
-        review.suggested_reply = aiResult.suggested_reply;
-        review.confidence = aiResult.confidence;
-        review.needs_human_review = aiResult.needs_human_review;
+      const results = await analyseBatch(batch);
 
-        // Finalize status
-        review.status = "Classified";
-        review.classified_at = Date.now();
+      if (results.length > 0) {
+        // Match each result back to review by index
+        for (const result of results) {
+          const review = batch[result.index];
+          if (!review) continue;
 
-        await review.save();
-        console.log(`[AI Worker] Successfully classified review ${review.review_id}`);
+          review.sentiment = result.sentiment;
+          review.primary_department = result.primary_department;
+          review.urgency = result.urgency;
+          review.issues = result.issues || [];
+          review.positive_aspects = result.positive_aspects || [];
+          review.confidence = result.confidence;
+          review.needs_human_review = result.needs_human_review;
+          review.status = "Classified";
+          review.classified_at = Date.now();
+
+          await review.save();
+        }
+        console.log(`[AI Worker] Batch ${b + 1} done. ${results.length} classified.`);
       } else {
-        console.warn(`[AI Worker] AI Analysis failed for ${review.review_id}`);
-        // Optionally mark as failed or retry later
-        review.status = "AI Failed";
-        await review.save();
+        // Batch failed — mark all for retry
+        console.warn(`[AI Worker] Batch ${b + 1} failed. Marking for retry.`);
+        for (const review of batch) {
+          review.status = "AI Failed";
+          await review.save();
+        }
+      }
+
+      // 2s delay between batches (rate limit safety)
+      if (b < batches.length - 1) {
+        await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
       }
     }
   } catch (err) {
-    console.error('[AI Worker] Error during processing:', err);
+    console.error('[AI Worker] Error:', err);
   }
 };
 
