@@ -39,13 +39,26 @@ const initCronJobs = async () => {
   console.log(`[Cron] Found ${activeProps.length} active properties.`);
 
   activeProps.forEach((prop, stagger_index) => {
-    // TEMPORARY TEST: Run exactly in 4 minutes (9:51 AM UTC / 3:21 PM IST) on Railway!
-    const urgentTask = cron.schedule(`${51 + stagger_index} 9 * * *`, async () => {
+    // URGENT urgency (1-3★): every 6 hours, 15 min gap
+    let urgentMins = stagger_index * 15;
+    let urgentHours = '*/6';
+    if (urgentMins >= 60) {
+      urgentMins = urgentMins % 60;
+      urgentHours = '1-23/6';
+    }
+    const urgentTask = cron.schedule(`${urgentMins} ${urgentHours} * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'URGENT', 1, 3);
     });
     activeCrons.push(urgentTask);
 
-    const lowTask = cron.schedule(`${53 + stagger_index} 9 * * *`, async () => {
+    // LOW urgency (4-5★): every 10 hours, 20 min gap
+    let lowMins = stagger_index * 20;
+    let lowHours = '*/10';
+    if (lowMins >= 60) {
+      lowMins = lowMins % 60;
+      lowHours = '1-23/10';
+    }
+    const lowTask = cron.schedule(`${lowMins} ${lowHours} * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'LOW', 4, 5);
     });
     activeCrons.push(lowTask);
