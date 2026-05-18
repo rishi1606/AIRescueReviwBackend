@@ -136,8 +136,9 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
     if (!scraperFn) continue;
 
     try {
+      const limit = prop.max_reviews_per_sync || 5;
       const isHeadless = platform === 'Google' || platform === 'Booking.com';
-      const result = await scraperFn(url, 2, isHeadless);
+      const result = await scraperFn(url, limit, isHeadless);
 
       if (result && result.success && result.reviews) {
         if (result.reviews.length === 0) {

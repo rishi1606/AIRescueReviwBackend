@@ -51,7 +51,8 @@ const hotelSchema = new mongoose.Schema({
     urgent_sync_interval: { type: String, default: "2hr" },
     low_sync_interval: { type: String, default: "6hr" },
     last_sync_status: { type: String, default: "never" },
-    last_sync_time: { type: Date }
+    last_sync_time: { type: Date },
+    max_reviews_per_sync: { type: Number, default: 5 }
   }],
   
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }
