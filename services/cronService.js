@@ -39,13 +39,13 @@ const initCronJobs = async () => {
   console.log(`[Cron] Found ${activeProps.length} active properties.`);
 
   activeProps.forEach((prop, stagger_index) => {
-    // TEMPORARY TEST: Run exactly at 3:15 PM IST to test live server trigger!
-    const urgentTask = cron.schedule(`${15 + stagger_index} 15 * * *`, async () => {
+    // TEMPORARY TEST: Run exactly in 4 minutes (9:51 AM UTC / 3:21 PM IST) on Railway!
+    const urgentTask = cron.schedule(`${51 + stagger_index} 9 * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'URGENT', 1, 3);
     });
     activeCrons.push(urgentTask);
 
-    const lowTask = cron.schedule(`${17 + stagger_index} 15 * * *`, async () => {
+    const lowTask = cron.schedule(`${53 + stagger_index} 9 * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'LOW', 4, 5);
     });
     activeCrons.push(lowTask);
@@ -190,7 +190,7 @@ const runAIWorker = async () => {
           review.positive_aspects = result.positive_aspects || [];
           review.confidence = result.confidence;
           review.needs_human_review = result.needs_human_review;
-          
+
           review.is_processed = true;
           review.classified_at = Date.now();
 
