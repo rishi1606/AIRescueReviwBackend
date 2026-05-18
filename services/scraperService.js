@@ -33,8 +33,11 @@ exports.openGoogleMaps = async (url, limit = 30, headless = false) => {
       headless: headless,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
@@ -220,8 +223,11 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
       headless: headless,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
@@ -591,8 +597,11 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
       headless: headless,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
@@ -608,7 +617,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
       const btn = document.querySelector('button[data-stid="reviews-link"]');
       if (btn) btn.click();
     });
-    
+
     // STEP 3 — Wait for review modal
     await page.waitForSelector('.uitk-expando-peek-inner', { timeout: 30000 });
     console.log('Reviews modal loaded');
@@ -618,7 +627,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
     while (attempts < 10) {
       const currentCards = await page.$$('.uitk-layout-grid.uitk-layout-grid-has-auto-columns');
       console.log(`Found ${currentCards.length} review cards...`);
-      
+
       if (currentCards.length >= limit) break;
 
       const loadMoreBtn = await page.$('#load-more-reviews');
@@ -628,7 +637,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
       await loadMoreBtn.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
       await new Promise(r => setTimeout(r, 1000));
       await page.evaluate(() => document.querySelector('#load-more-reviews')?.click());
-      
+
       // Wait for new content
       await new Promise(r => setTimeout(r, 4000));
       attempts++;
@@ -642,19 +651,19 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
     for (const card of reviewCards) {
       try {
         const reviewerName = await card.$eval('h4.uitk-heading.uitk-heading-7', el => el.innerText.trim()).catch(() => '');
-        
+
         // Filters
         if (!reviewerName || reviewerName.length > 30 || reviewerName.includes('policy')) continue;
 
         const ratingText = await card.$eval('h3.uitk-heading', el => el.innerText.trim()).catch(() => '');
         const rating = parseFloat(ratingText.split('/')[0]) || null;
-        
+
         const reviewDate = await card.$$eval('.uitk-text', els => {
-            const found = els.find(el => {
-              const text = el.innerText.trim();
-              return text.includes('2026') || text.includes('2025') || text.includes('2024');
-            });
-            return found ? found.innerText.trim() : '';
+          const found = els.find(el => {
+            const text = el.innerText.trim();
+            return text.includes('2026') || text.includes('2025') || text.includes('2024');
+          });
+          return found ? found.innerText.trim() : '';
         }).catch(() => '');
 
         const reviewText = await card.$eval('.uitk-expando-peek-inner .uitk-text', el => el.innerText.trim()).catch(() => '');
@@ -666,7 +675,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 
         reviews.push({ reviewerName, rating, reviewDate, reviewText });
         if (reviews.length >= limit) break;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     console.log(`Extracted ${reviews.length} unique Expedia reviews.`);
@@ -689,8 +698,11 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
       headless: headless,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
@@ -706,7 +718,7 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
     for (let i = 0; i < 15; i++) {
       await page.evaluate(() => window.scrollBy(0, 800));
       await new Promise(r => setTimeout(r, 1000));
-      
+
       const cards = await page.$$('div[data-element-name="review-comment"]');
       if (cards.length > 0) {
         foundReviews = true;
@@ -728,32 +740,32 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
     // PAGINATION LOOP
     while (allCollectedReviews.length < limit && currentPage < 10) {
       console.log(`Extracting Agoda reviews from page ${currentPage}...`);
-      
+
       // Wait for content
       await new Promise(r => setTimeout(r, 3000));
 
       // Extract current page reviews
       const pageReviews = await page.$$eval('div[data-element-name="review-comment"]', (cards) => {
         return cards.map(card => {
-            // Reviewer Name (e.g., "lisa from United States")
-            const reviewerName = card.querySelector('[data-info-type="reviewer-name"] strong')?.innerText?.trim() || 
-                               card.querySelector('.Review-comment-reviewer span')?.innerText?.trim() || '';
-            
-            // Rating (e.g., "8.4")
-            const ratingText = card.querySelector('.Review-comment-leftScore')?.innerText?.trim() || '';
-            const rating = parseFloat(ratingText) || null;
-            
-            // Review Date
-            const reviewDate = card.querySelector('.Review-statusBar-left span')?.innerText?.trim() || '';
-            
-            // Review Title
-            const reviewTitle = card.querySelector('[data-testid="review-title"]')?.innerText?.trim() || '';
-            
-            // Review Text
-            const reviewTextOnly = card.querySelector('[data-testid="review-comment"]')?.innerText?.trim() || '';
-            const reviewText = `${reviewTitle} ${reviewTextOnly}`.trim();
-            
-            return { reviewerName, rating, reviewDate, reviewText };
+          // Reviewer Name (e.g., "lisa from United States")
+          const reviewerName = card.querySelector('[data-info-type="reviewer-name"] strong')?.innerText?.trim() ||
+            card.querySelector('.Review-comment-reviewer span')?.innerText?.trim() || '';
+
+          // Rating (e.g., "8.4")
+          const ratingText = card.querySelector('.Review-comment-leftScore')?.innerText?.trim() || '';
+          const rating = parseFloat(ratingText) || null;
+
+          // Review Date
+          const reviewDate = card.querySelector('.Review-statusBar-left span')?.innerText?.trim() || '';
+
+          // Review Title
+          const reviewTitle = card.querySelector('[data-testid="review-title"]')?.innerText?.trim() || '';
+
+          // Review Text
+          const reviewTextOnly = card.querySelector('[data-testid="review-comment"]')?.innerText?.trim() || '';
+          const reviewText = `${reviewTitle} ${reviewTextOnly}`.trim();
+
+          return { reviewerName, rating, reviewDate, reviewText };
         });
       });
 
@@ -815,8 +827,11 @@ exports.openHotelsReviews = async (url) => {
       headless: false,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
@@ -973,8 +988,11 @@ exports.openAirbnbReviews = async (url, limit = 5) => {
       headless: false,
       defaultViewport: null,
       args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled'
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
