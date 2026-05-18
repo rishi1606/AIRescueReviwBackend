@@ -25,18 +25,17 @@ function removeDuplicateReviews(reviews) {
  */
 
 
-exports.openGoogleMaps = async (url, limit = 30, headless = false) => {
+exports.openGoogleMaps = async (url, limit = 30, headless = true) => {
   console.log(`Launching browser (Headless: ${headless})...`);
 
   try {
     const browser = await puppeteer.launch({
-      headless: headless,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
@@ -220,13 +219,12 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: headless,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
@@ -594,13 +592,12 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: headless,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
@@ -695,13 +692,12 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: headless,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
@@ -824,13 +820,12 @@ exports.openHotelsReviews = async (url) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
@@ -985,13 +980,12 @@ exports.openAirbnbReviews = async (url, limit = 5) => {
   try {
 
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       defaultViewport: null,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--start-maximized",
         "--disable-blink-features=AutomationControlled"
       ]
     });
