@@ -39,26 +39,13 @@ const initCronJobs = async () => {
   console.log(`[Cron] Found ${activeProps.length} active properties.`);
 
   activeProps.forEach((prop, stagger_index) => {
-    // URGENT urgency (1-3★): every 6 hours, 15 min gap
-    let urgentMins = stagger_index * 15;
-    let urgentHours = '*/6';
-    if (urgentMins >= 60) {
-      urgentMins = urgentMins % 60;
-      urgentHours = '1-23/6';
-    }
-    const urgentTask = cron.schedule(`${urgentMins} ${urgentHours} * * *`, async () => {
+    // TEMPORARY TEST: Run exactly at 3:15 PM IST to test live server trigger!
+    const urgentTask = cron.schedule(`${15 + stagger_index} 15 * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'URGENT', 1, 3);
     });
     activeCrons.push(urgentTask);
 
-    // LOW urgency (4-5★): every 10 hours, 20 min gap
-    let lowMins = stagger_index * 20;
-    let lowHours = '*/10';
-    if (lowMins >= 60) {
-      lowMins = lowMins % 60;
-      lowHours = '1-23/10';
-    }
-    const lowTask = cron.schedule(`${lowMins} ${lowHours} * * *`, async () => {
+    const lowTask = cron.schedule(`${17 + stagger_index} 15 * * *`, async () => {
       await processPropertyTier(hotel._id, prop, 'LOW', 4, 5);
     });
     activeCrons.push(lowTask);
