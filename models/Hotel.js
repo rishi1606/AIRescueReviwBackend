@@ -47,7 +47,9 @@ const hotelSchema = new mongoose.Schema({
     rooms: { type: Number, required: true },
     timezone: { type: String, default: "IST" },
     is_active: { type: Boolean, default: true },
-    platforms: { type: mongoose.Schema.Types.Mixed, default: {} }
+    platforms: { type: mongoose.Schema.Types.Mixed, default: {} },
+    urgent_sync_interval: { type: String, default: "2hr" },
+    low_sync_interval: { type: String, default: "6hr" }
   }],
   
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }

@@ -1,5 +1,6 @@
 const Hotel = require("../models/Hotel");
 const Staff = require("../models/Staff");
+const { initCronJobs } = require("../services/cronService");
 
 exports.getHotel = async (req, res, next) => {
   try {
@@ -54,6 +55,13 @@ exports.updateHotel = async (req, res, next) => {
       { new: true, runValidators: true }
     );
 
+    // Dynamic auto-reload of crons!
+    try {
+      await initCronJobs();
+    } catch (cronErr) {
+      console.error("[Cron] Failed to reload crons after hotel update:", cronErr);
+    }
+ 
     res.json({ success: true, data: hotel });
   } catch (err) {
     next(err);
