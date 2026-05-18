@@ -82,17 +82,36 @@ const initCronJobs = async () => {
   });
 };
 
+const updatePropertySyncStatus = async (hotel_id, prop_id, status) => {
+  try {
+    await Hotel.updateOne(
+      { _id: hotel_id, "properties._id": prop_id },
+      {
+        $set: {
+          "properties.$.last_sync_status": status,
+          "properties.$.last_sync_time": new Date()
+        }
+      }
+    );
+  } catch (err) {
+    console.error('[Cron] Failed to update property sync status:', err);
+  }
+};
+
 const processPropertyTier = async (hotel_id, prop, tierName, minRating, maxRating) => {
   try {
     console.log(`[Cron][${prop.name}] Starting ${tierName} urgency cycle (${minRating}-${maxRating}★)...`);
 
     await scrapePropertyPlatforms(hotel_id, prop, minRating, maxRating);
 
+    await updatePropertySyncStatus(hotel_id, prop._id, 'success');
+
     // First analysis runs directly after saving new reviews
     await runAIWorker();
 
   } catch (err) {
     console.error(`[Cron][${prop.name}] Critical Error in ${tierName} cycle:`, err);
+    await updatePropertySyncStatus(hotel_id, prop._id, 'failed');
   }
 };
 

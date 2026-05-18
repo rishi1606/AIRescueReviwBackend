@@ -1,10 +1,19 @@
 const Hotel = require("../models/Hotel");
 const Staff = require("../models/Staff");
+const Review = require("../models/Review");
 const { initCronJobs } = require("../services/cronService");
 
 exports.getHotel = async (req, res, next) => {
   try {
-    const hotel = await Hotel.findById(req.user.hotel_id);
+    const hotel = await Hotel.findById(req.user.hotel_id).lean();
+    if (hotel && hotel.properties) {
+      for (const prop of hotel.properties) {
+        prop.review_count = await Review.countDocuments({
+          hotel_id: req.user.hotel_id,
+          property_name: prop.name
+        });
+      }
+    }
     res.json({ success: true, data: hotel });
   } catch (err) {
     next(err);
