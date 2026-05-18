@@ -172,14 +172,25 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
     const uniqueString = `${platform}_${raw.reviewerName}_${raw.reviewText}`;
     const review_id = crypto.createHash('md5').update(uniqueString).digest('hex');
 
-    let rating = raw.rating;
-    if (platform === 'Booking.com' || platform === 'Agoda') {
-      rating = Math.round((rating / 2) * 10) / 10;
-    } else {
-      rating = Math.round(rating * 10) / 10;
+    const rawRating = raw.rating;
+    const rawScale = (platform === 'Booking.com' || platform === 'Agoda') ? 10 : 5;
+    const normalisedRating = (platform === 'Booking.com' || platform === 'Agoda')
+      ? (Math.round((rawRating / 2) * 10) / 10)
+      : (Math.round(rawRating * 10) / 10);
+
+    const rating = normalisedRating;
+
+    let finalMin = minRating;
+    let finalMax = maxRating;
+
+    if (minRating === 1 && maxRating === 3) {
+      if (platform === 'Booking.com' || platform === 'Agoda') {
+        finalMin = 0;
+        finalMax = 3.9;
+      }
     }
 
-    if (rating < minRating || rating > maxRating) {
+    if (rating < finalMin || rating > finalMax) {
       skippedByRating++;
       continue;
     }
@@ -192,6 +203,9 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
         hotel_name: hotel_name,
         reviewer_name: raw.reviewerName,
         rating: rating,
+        raw_rating: rawRating,
+        raw_rating_scale: rawScale,
+        normalised_rating: normalisedRating,
         review_text: raw.reviewText,
         review_date: raw.reviewDate,
         platform: platform,

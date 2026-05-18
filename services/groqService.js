@@ -69,7 +69,7 @@ ${reviews.map((r, i) => `[${i}] Platform: ${r.platform || "Unknown"} | Rating: $
           break;
         }
       }
-      
+
       // If it returned an object with numeric keys like { "0": {...}, "1": {...} }
       if (!foundArray && Object.values(parsed).every(val => typeof val === 'object' && val !== null && 'index' in val)) {
         parsed = Object.values(parsed);
