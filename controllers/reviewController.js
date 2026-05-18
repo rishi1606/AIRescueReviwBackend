@@ -14,7 +14,7 @@ exports.getReviews = async (req, res, next) => {
     if (status && status !== "ALL") query.status = status;
     if (platform && platform !== "ALL") query.platform = platform;
     if (rating && rating !== "ALL") query.rating = parseInt(rating);
-    
+
     if (dateStart || dateEnd) {
       query.review_date = {};
       if (dateStart) query.review_date.$gte = dateStart;
@@ -54,8 +54,8 @@ exports.importReviews = async (req, res, next) => {
         if (r.platform_review_id) {
           orConditions.push({ platform_review_id: r.platform_review_id });
         }
-        
-        const existing = await Review.findOne({ 
+
+        const existing = await Review.findOne({
           hotel_id: req.user.hotel_id,
           $or: orConditions
         });
@@ -105,8 +105,15 @@ exports.updateClassification = async (req, res, next) => {
     // 2. Determine Status based on Hotel escalation rules & AI flags
     const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
     let status = "IN REVIEW";
-    
-    if (extraction.is_suspicious) {
+    const escalation = review.rating <= escalationThreshold;
+    let is_suspicious = extraction.is_suspicious || false;
+    let suspicious_reason = extraction.suspicious_reason || "";
+
+    if (review.rating <= 1) {
+      is_suspicious = true;
+      suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
+      status = "Suspicious";
+    } else if (is_suspicious) {
       status = "Suspicious";
     } else if (review.rating <= escalationThreshold) {
       status = "ESCALATED";
@@ -123,6 +130,9 @@ exports.updateClassification = async (req, res, next) => {
       urgency,
       confidence,
       status,
+      escalation,
+      is_suspicious,
+      suspicious_reason,
       needs_human_review: confidence < (hotel?.aiConfig?.confidenceThreshold || 75),
       classified_at: Date.now()
     };
@@ -143,7 +153,7 @@ exports.approveResponse = async (req, res, next) => {
   try {
     const { review_id } = req.params;
     const { response_text, response_tone, approved_by, is_submission } = req.body;
-    
+
     // RBAC: Only GM/Dept Head can approve directly. Staff MUST use is_submission=true.
     const isApprover = req.user.role === "gm" || req.user.role === "dept_head" || req.user.role === "superadmin";
     if (!isApprover && !is_submission) {
@@ -154,7 +164,7 @@ exports.approveResponse = async (req, res, next) => {
 
     const updatedReview = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
-      { 
+      {
         status: is_submission ? "PENDING APPROVAL" : "RESPONDED",
         response_text,
         response_tone,
@@ -235,7 +245,7 @@ exports.reanalyse = async (req, res, next) => {
     const { review_id } = req.params;
     const review = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
-      { 
+      {
         status: "NEW",
         sentiment: null,
         sentiment_reason: null,
@@ -254,6 +264,7 @@ exports.reanalyse = async (req, res, next) => {
         suspicious_reason: null,
         guest_emotion: null,
         escalation_risk: null,
+        escalation: false,
         escalation_reason: null,
         needs_human_review: null,
         classified_at: null
@@ -287,26 +298,26 @@ exports.assignStaff = async (req, res, next) => {
 
     review.assignee_id = assignee_id;
     review.assignee_name = assignee_name;
-    
+
     // Auto-update status to match lifecycle
     const lifecycleStatuses = ["NEW", "IN REVIEW", "RESPONDED", "CLOSED", "ESCALATED"];
     if (!lifecycleStatuses.includes(review.status) || review.status === "NEW") {
       const hotel = await Hotel.findOne({ hotel_id: req.user.hotel_id });
       const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
-      
-      if (review.rating <= escalationThreshold) {
-        review.status = "ESCALATED";
-      } else {
-        review.status = "IN REVIEW";
-      }
+
+      review.escalation = review.rating <= escalationThreshold;
 
       if (review.rating <= 1) {
         review.is_suspicious = true;
         review.suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
+        review.status = "Suspicious";
+      } else if (review.rating <= escalationThreshold) {
         review.status = "ESCALATED";
+      } else {
+        review.status = "IN REVIEW";
       }
     }
-    
+
     await review.save();
 
     let ticket;
@@ -321,10 +332,10 @@ exports.assignStaff = async (req, res, next) => {
       const hotel = await Hotel.findById(req.user.hotel_id);
       const slaConfig = hotel?.slaConfig || { high: 4, medium: 24, low: 72 };
       const deptSla = hotel?.deptSlaConfig || {};
-      
+
       const urgencyKey = (review.urgency || "Medium").toLowerCase();
       const deptName = review.primary_department;
-      
+
       // Calculate SLA: Dept override takes priority, then urgency-based
       // Use case-insensitive lookup for department
       let deptHours;

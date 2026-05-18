@@ -23,7 +23,8 @@ exports.updateHotel = async (req, res, next) => {
       contact_email,
       slaConfig,
       deptSlaConfig,
-      aiConfig
+      aiConfig,
+      properties
     } = req.body;
 
     // Validation
@@ -47,7 +48,8 @@ exports.updateHotel = async (req, res, next) => {
         contact_email,
         slaConfig,
         deptSlaConfig,
-        aiConfig
+        aiConfig,
+        properties
       }, 
       { new: true, runValidators: true }
     );

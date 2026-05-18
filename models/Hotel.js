@@ -40,6 +40,15 @@ const hotelSchema = new mongoose.Schema({
     escalationAlert: { type: Boolean, default: true },
     escalationRatingThreshold: { type: Number, default: 2 } // Auto-escalate if rating <= 2
   },
+
+  properties: [{
+    name: { type: String, required: true },
+    city: { type: String, required: true },
+    rooms: { type: Number, required: true },
+    timezone: { type: String, default: "IST" },
+    is_active: { type: Boolean, default: true },
+    platforms: { type: mongoose.Schema.Types.Mixed, default: {} }
+  }],
   
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }
 }, { timestamps: true });

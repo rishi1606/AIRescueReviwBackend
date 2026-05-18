@@ -60,12 +60,19 @@ ${reviews.map((r, i) => `[${i}] Platform: ${r.platform || "Unknown"} | Rating: $
     // Groq json_object mode wraps arrays in an object sometimes
     if (!Array.isArray(parsed)) {
       // Try to find the array inside the object
+      let foundArray = false;
       const keys = Object.keys(parsed);
       for (const key of keys) {
         if (Array.isArray(parsed[key])) {
           parsed = parsed[key];
+          foundArray = true;
           break;
         }
+      }
+      
+      // If it returned an object with numeric keys like { "0": {...}, "1": {...} }
+      if (!foundArray && Object.values(parsed).every(val => typeof val === 'object' && val !== null && 'index' in val)) {
+        parsed = Object.values(parsed);
       }
     }
 

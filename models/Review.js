@@ -17,6 +17,8 @@ const reviewSchema = new mongoose.Schema({
   reviewer_language: { type: String },
   loyalty_tier: { type: String },
   status: { type: String, default: "Pending AI" },
+  is_processed: { type: Boolean, default: false },
+  retry_count: { type: Number, default: 0 },
   sentiment: { type: String },
   sentiment_reason: { type: String },
   confidence: { type: Number },
