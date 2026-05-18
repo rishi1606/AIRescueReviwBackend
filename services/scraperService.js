@@ -289,13 +289,18 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
     );
 
     // WAIT REVIEWS
-    await page.waitForSelector(
-      '[data-testid="review-card"]',
-      {
-        timeout: 30000
-      }
-    );
-
+    try {
+      await page.waitForSelector(
+        '[data-testid="review-card"]',
+        {
+          timeout: 25000
+        }
+      );
+    } catch (err) {
+      console.log('⚠️ [Booking.com] Timeout waiting for review cards. The page may have a classic layout, captcha, or zero reviews.');
+      await browser.close();
+      return [];
+    }
     let allReviews = [];
     let currentPage = 1;
 
