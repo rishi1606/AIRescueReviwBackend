@@ -50,6 +50,10 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  // Initialize cron jobs
-  initCronJobs();
+  // Initialize cron jobs only locally
+  if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+    initCronJobs();
+  } else {
+    console.log('[Cron] Scraper crons are disabled on the server.');
+  }
 });

@@ -246,42 +246,43 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
     console.log('Booking page fully loaded');
 
     // WAIT REVIEWS TAB
-    await page.waitForSelector(
-      '#reviews-tab-trigger',
-      {
-        timeout: 30000
-      }
-    );
-
-    // SCROLL TO REVIEWS
-    await page.$eval(
-      '#reviews-tab-trigger',
-      el => {
-        el.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
-        });
-      }
-    );
-
-    await new Promise(resolve =>
-      setTimeout(resolve, 2000)
-    );
-
-    // CLICK REVIEWS TAB
-    await page.evaluate(() => {
-
-      const btn = document.querySelector(
-        '#reviews-tab-trigger'
+    try {
+      await page.waitForSelector(
+        '#reviews-tab-trigger',
+        {
+          timeout: 10000
+        }
       );
 
-      if (btn) {
-        btn.click();
-      }
+      // SCROLL TO REVIEWS
+      await page.$eval(
+        '#reviews-tab-trigger',
+        el => {
+          el.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
+          });
+        }
+      );
 
-    });
+      await new Promise(resolve =>
+        setTimeout(resolve, 2000)
+      );
 
-    console.log('Reviews tab clicked');
+      // CLICK REVIEWS TAB
+      await page.evaluate(() => {
+        const btn = document.querySelector(
+          '#reviews-tab-trigger'
+        );
+        if (btn) {
+          btn.click();
+        }
+      });
+
+      console.log('Reviews tab clicked');
+    } catch (tabErr) {
+      console.log('⚠️ [Booking.com] Timeout waiting for #reviews-tab-trigger or element not found. Proceeding to look for reviews directly...');
+    }
 
     // WAIT POPUP
     await new Promise(resolve =>
