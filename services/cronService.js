@@ -8,9 +8,11 @@ const { analyseBatch } = require('./groqService');
 let activeCrons = [];
 
 const getCronPattern = (interval, staggerMins) => {
-  if (interval === '30min') {
-    const startMin = staggerMins % 30;
-    return `${startMin},${startMin + 30} * * * *`;
+  const minMatch = interval.match(/^(\d+)min$/);
+  if (minMatch) {
+    const minVal = parseInt(minMatch[1]);
+    const startMin = staggerMins % minVal;
+    return `${startMin}-59/${minVal} * * * *`;
   }
 
   if (interval === '1hr') {
@@ -138,7 +140,11 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
     try {
       const limit = prop.max_reviews_per_sync || 5;
       const isHeadless = platform === 'Google' || platform === 'Booking.com';
-      const result = await scraperFn(url, limit, isHeadless);
+      
+      const existingDocs = await Review.find({ hotel_id, platform }).select('reviewer_name review_text');
+      const existingKeys = existingDocs.map(r => (r.reviewer_name || "") + (r.review_text || ""));
+
+      const result = await scraperFn(url, limit, isHeadless, existingKeys, minRating, maxRating);
 
       if (result && result.success && result.reviews) {
         if (result.reviews.length === 0) {

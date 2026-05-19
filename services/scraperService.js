@@ -25,7 +25,7 @@ function removeDuplicateReviews(reviews) {
  */
 
 
-exports.openGoogleMaps = async (url, limit = 30, headless = true) => {
+exports.openGoogleMaps = async (url, limit = 30, headless = true, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log(`Launching browser (Headless: ${headless})...`);
 
   try {
@@ -69,140 +69,83 @@ exports.openGoogleMaps = async (url, limit = 30, headless = true) => {
     console.log('Reviews tab clicked');
 
     // STEP 3 — Scroll Loop to Load More Reviews
-    let currentReviewCount = 0;
     let scrollAttempts = 0;
-    const maxScrollAttempts = 20;
+    const maxScrollAttempts = 40;
+    const existingSet = new Set(existingKeys || []);
+    let finalReviews = [];
 
-    console.log(`Scrolling to load at least ${limit} reviews...`);
+    console.log(`Scrolling and extracting to guarantee ${limit} new reviews within ${minRating}-${maxRating} stars...`);
 
-    while (currentReviewCount < limit && scrollAttempts < maxScrollAttempts) {
-      // Get current count of review cards
-      currentReviewCount = (await page.$$('.Svr5cf.bKhjM')).length;
-      console.log(`Found ${currentReviewCount} reviews so far...`);
+    while (scrollAttempts < maxScrollAttempts) {
+      // 1. Click any visible 'Read more' buttons to ensure we get full text
+      const readMoreButtons = await page.$$('span.Jmi7d.TJUuge');
+      for (const btn of readMoreButtons) {
+        try {
+          // Check if it's already expanded (the button disappears or becomes hidden, but just in case)
+          const isVisible = await btn.evaluate(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+          if (isVisible) {
+            await btn.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+            await new Promise(r => setTimeout(r, 200));
+            await btn.click();
+            await new Promise(r => setTimeout(r, 200));
+          }
+        } catch (e) {}
+      }
 
-      if (currentReviewCount >= limit) break;
+      // 2. Extract current reviews on the page
+      let currentReviews = await page.$$eval('.Svr5cf.bKhjM', (cards) => {
+        return cards.map(card => {
+          const reviewerName = card.querySelector('.DHIhE.QB2Jof')?.innerText?.trim() || '';
+          const ratingText = card.querySelector('.GDWaad')?.innerText?.trim() || '';
+          const rating = parseFloat(ratingText.split('/')[0]) || null;
+          const reviewDate = card.querySelector('.iUtr1.CQYfx')?.innerText?.trim() || '';
+          const expandedReview = card.querySelector('div[jsname="NwoMSd"] span')?.innerText?.trim();
+          const shortReview = card.querySelector('div[jsname="kmPxT"] span')?.innerText?.trim();
+          const reviewText = expandedReview || shortReview || '';
+          const stayType = card.querySelector('.ThUm5b span')?.innerText?.trim() || '';
 
-      // Scroll the last found card into view to trigger lazy loading
+          return { reviewerName, rating, reviewDate, stayType, reviewText };
+        });
+      });
+
+      // 3. Filter against DB keys and rating
+      const deduplicated = removeDuplicateReviews(currentReviews);
+      const newReviews = deduplicated.filter(r => {
+        const meetsRating = r.rating >= minRating && r.rating <= maxRating;
+        const isNew = !existingSet.has(r.reviewerName + r.reviewText);
+        return meetsRating && isNew;
+      });
+
+      console.log(`Found ${currentReviews.length} total reviews, ${newReviews.length} match criteria...`);
+
+      if (newReviews.length >= limit) {
+        finalReviews = newReviews.slice(0, limit);
+        break;
+      }
+
+      // 4. Scroll down to load more
       await page.evaluate(() => {
         const cards = document.querySelectorAll('.Svr5cf.bKhjM');
         if (cards.length > 0) {
           cards[cards.length - 1].scrollIntoView();
         }
-        window.scrollBy(0, 500); // Also scroll window slightly
+        window.scrollBy(0, 800);
       });
 
-      // Wait for new cards to appear
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(r => setTimeout(r, 3000));
       scrollAttempts++;
+      
+      // If we hit the end of the loop but didn't break, update finalReviews with what we have
+      finalReviews = newReviews;
     }
 
     console.log('Scroll loop finished.');
-
-    // STEP 4 — Click ALL Read More buttons (for expanded text)
-    const readMoreButtons = await page.$$(
-      'span.Jmi7d.TJUuge'
-    );
-
-    console.log(
-      `Found ${readMoreButtons.length} read more buttons`
-    );
-
-    for (const btn of readMoreButtons) {
-      try {
-        await btn.evaluate(el => {
-          el.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center'
-          });
-        });
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        await btn.click();
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-      } catch (err) {
-        console.log(
-          'Read more click failed:',
-          err.message
-        );
-      }
-    }
-
-    console.log('Expanded all reviews');
-
-    // STEP 5 — Extract Reviews
-    let reviews = await page.$$eval(
-      '.Svr5cf.bKhjM',
-      (cards) => {
-        return cards.map(card => {
-          // Reviewer Name
-          const reviewerName =
-            card.querySelector('.DHIhE.QB2Jof')
-              ?.innerText?.trim() || '';
-
-          // Rating
-          const ratingText =
-            card.querySelector('.GDWaad')
-              ?.innerText?.trim() || '';
-
-          const rating =
-            parseFloat(ratingText.split('/')[0]) || null;
-
-          // Review Date
-          const reviewDate =
-            card.querySelector('.iUtr1.CQYfx')
-              ?.innerText?.trim() || '';
-
-          // FULL Review Text
-          let reviewText = '';
-
-          // Expanded review
-          const expandedReview =
-            card.querySelector(
-              'div[jsname="NwoMSd"] span'
-            )?.innerText?.trim();
-
-          // Short review fallback
-          const shortReview =
-            card.querySelector(
-              'div[jsname="kmPxT"] span'
-            )?.innerText?.trim();
-
-          reviewText =
-            expandedReview ||
-            shortReview ||
-            '';
-
-          // Stay Type
-          const stayType =
-            card.querySelector('.ThUm5b span')
-              ?.innerText?.trim() || '';
-
-          return {
-            reviewerName,
-            rating,
-            reviewDate,
-            stayType,
-            reviewText
-          };
-        });
-      }
-    );
-
-    // Remove duplicates
-    reviews = removeDuplicateReviews(reviews);
-
-    // Take only required limit
-    reviews = reviews.slice(0, limit);
-
-    console.log('Reviews Extracted (Deduplicated):', reviews);
+    console.log('Reviews Extracted (Deduplicated & New):', finalReviews);
 
     return {
       success: true,
-      totalReviews: reviews.length,
-      reviews
+      totalReviews: finalReviews.length,
+      reviews: finalReviews
     };
 
   } catch (err) {
@@ -214,8 +157,15 @@ exports.openGoogleMaps = async (url, limit = 30, headless = true) => {
 /**
  * Step 1: Open Booking.com and click the Reviews tab
  */
-exports.openBookingReviews = async (url, limit = 3, headless = false) => {
+exports.openBookingReviews = async (url, limit = 3, headless = false, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log(`Launching browser for Booking (Headless: ${headless})...`);
+
+  let finalMin = minRating;
+  let finalMax = maxRating;
+  if (minRating === 1 && maxRating === 3) {
+    finalMin = 0;
+    finalMax = 3.9;
+  }
 
   try {
     const browser = await puppeteer.launch({
@@ -302,6 +252,7 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
       await browser.close();
       return [];
     }
+    const existingSet = new Set(existingKeys || []);
     let allReviews = [];
     let currentPage = 1;
 
@@ -417,10 +368,20 @@ exports.openBookingReviews = async (url, limit = 3, headless = false) => {
         }
       );
 
+      const newReviews = currentReviews.filter(r => {
+        let normRating = 5;
+        if (r.rating !== null) {
+          normRating = Math.round((r.rating / 2) * 10) / 10;
+        }
+        const meetsRating = normRating >= finalMin && normRating <= finalMax;
+        const isNew = !existingSet.has(r.reviewerName + r.reviewText);
+        return meetsRating && isNew;
+      });
+
       // ADD REVIEWS
       allReviews = [
         ...allReviews,
-        ...currentReviews
+        ...newReviews
       ];
 
       // REMOVE DUPLICATES
@@ -593,7 +554,7 @@ exports.scrapeGoogleMaps = async (url, maxReviews = 3) => {
 /**
  * Expedia Review Scraper (Open Browser Only for now)
  */
-exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
+exports.openExpediaReviews = async (url, limit = 20, headless = false, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log(`Launching browser for Expedia (Headless: ${headless})...`);
 
   try {
@@ -627,11 +588,11 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 
     // STEP 4 — Pagination Loop (Click "More reviews")
     let attempts = 0;
-    while (attempts < 10) {
+    while (attempts < 15) { // Increased max attempts to fetch more for filtering
       const currentCards = await page.$$('.uitk-layout-grid.uitk-layout-grid-has-auto-columns');
       console.log(`Found ${currentCards.length} review cards...`);
 
-      if (currentCards.length >= limit) break;
+      if (currentCards.length >= limit * 3) break; // Fetch a larger buffer
 
       const loadMoreBtn = await page.$('#load-more-reviews');
       if (!loadMoreBtn) break;
@@ -648,6 +609,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 
     // STEP 5 — Final Extraction
     const reviewCards = await page.$$('.uitk-layout-grid.uitk-layout-grid-has-auto-columns');
+    const existingSet = new Set(existingKeys || []);
     const uniqueReviews = new Set();
     const reviews = [];
 
@@ -660,6 +622,8 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 
         const ratingText = await card.$eval('h3.uitk-heading', el => el.innerText.trim()).catch(() => '');
         const rating = parseFloat(ratingText.split('/')[0]) || null;
+        
+        if (rating !== null && (rating < minRating || rating > maxRating)) continue;
 
         const reviewDate = await card.$$eval('.uitk-text', els => {
           const found = els.find(el => {
@@ -673,7 +637,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
         if (!reviewText) continue;
 
         const uniqueKey = reviewerName + reviewText;
-        if (uniqueReviews.has(uniqueKey)) continue;
+        if (uniqueReviews.has(uniqueKey) || existingSet.has(uniqueKey)) continue;
         uniqueReviews.add(uniqueKey);
 
         reviews.push({ reviewerName, rating, reviewDate, reviewText });
@@ -693,8 +657,15 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false) => {
 /**
  * Agoda Review Scraper (Open Browser Only for now)
  */
-exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
+exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log(`Launching browser for Agoda (Headless: ${headless})...`);
+
+  let finalMin = minRating;
+  let finalMax = maxRating;
+  if (minRating === 1 && maxRating === 3) {
+    finalMin = 0;
+    finalMax = 3.9;
+  }
 
   try {
     const browser = await puppeteer.launch({
@@ -735,6 +706,7 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
       await new Promise(r => setTimeout(r, 3000));
     }
 
+    const existingSet = new Set(existingKeys || []);
     let allCollectedReviews = [];
     let currentPage = 1;
     const uniqueReviews = new Set();
@@ -774,8 +746,15 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false) => {
       // Filter and Add
       for (const r of pageReviews) {
         if (!r.reviewerName || !r.reviewText) continue;
+        
+        let normRating = 5;
+        if (r.rating !== null) {
+          normRating = Math.round((r.rating / 2) * 10) / 10;
+        }
+        if (normRating < finalMin || normRating > finalMax) continue;
+
         const key = r.reviewerName + r.reviewText;
-        if (!uniqueReviews.has(key)) {
+        if (!uniqueReviews.has(key) && !existingSet.has(key)) {
           uniqueReviews.add(key);
           allCollectedReviews.push(r);
         }
@@ -980,11 +959,10 @@ exports.openHotelsReviews = async (url) => {
 /**
  * Airbnb Review Scraper (Open Browser Only for now)
  */
-exports.openAirbnbReviews = async (url, limit = 5) => {
+exports.openAirbnbReviews = async (url, limit = 5, headless = true, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log('Launching browser for Airbnb...');
 
   try {
-
     const browser = await puppeteer.launch({
       headless: true,
       defaultViewport: null,
@@ -1002,7 +980,7 @@ exports.openAirbnbReviews = async (url, limit = 5) => {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
 
-    console.log('Opening Airbnb URL:', url);
+    console.log(`Opening Airbnb URL: ${url}`);
 
     await page.goto(url, {
       waitUntil: 'networkidle2',
@@ -1040,169 +1018,108 @@ exports.openAirbnbReviews = async (url, limit = 5) => {
       setTimeout(resolve, 5000)
     );
 
-    // SCROLL REVIEW MODAL
-    for (let i = 0; i < 6; i++) {
+    let scrollAttempts = 0;
+    const maxScrollAttempts = 30;
+    const existingSet = new Set(existingKeys || []);
+    let finalReviews = [];
 
+    console.log(`Scrolling and extracting to guarantee ${limit} new reviews within ${minRating}-${maxRating} stars...`);
+
+    while (scrollAttempts < maxScrollAttempts) {
+      // 1. Extract reviews
+      let currentReviews = await page.$$eval(
+        'div[data-review-id]',
+        (cards) => {
+          const results = [];
+          for (const card of cards) {
+            try {
+              // SKIP HOST RESPONSE BLOCKS
+              const responseHeading = card.querySelector('h2')?.innerText || '';
+              if (responseHeading.toLowerCase().includes('response from')) {
+                continue;
+              }
+
+              // REVIEWER NAME
+              const reviewerName = card.querySelector('h2[aria-level="2"]')?.innerText?.trim() || '';
+              if (!reviewerName) continue;
+
+              // REVIEW DATE
+              let reviewDate = '';
+              const possibleDates = card.querySelectorAll('div[class*="1h3mmnw"]');
+              possibleDates.forEach(el => {
+                const text = el.innerText?.trim() || '';
+                if (text.includes('2025') || text.includes('2026') || text.includes('2024')) {
+                  reviewDate = text;
+                }
+              });
+
+              // REVIEW TEXT
+              const reviewText = card.querySelector('.ljci3ej')?.innerText?.trim() || '';
+              if (!reviewText) continue;
+
+              // RATING
+              let rating = null;
+              const ratingLabel = card.querySelector('span[aria-hidden="true"]')?.innerText || '';
+              if (ratingLabel.toLowerCase().includes('5')) {
+                rating = 5;
+              }
+
+              results.push({
+                reviewerName,
+                rating,
+                reviewDate,
+                reviewText
+              });
+            } catch (e) { }
+          }
+          return results;
+        }
+      );
+
+      // 2. Filter against DB keys and rating
+      const uniqueReviewsMap = new Map();
+      currentReviews.forEach(r => {
+        const meetsRating = r.rating >= minRating && r.rating <= maxRating;
+        const key = r.reviewerName + r.reviewText;
+        if (meetsRating && !existingSet.has(key) && !uniqueReviewsMap.has(key)) {
+          uniqueReviewsMap.set(key, r);
+        }
+      });
+      
+      const newReviews = Array.from(uniqueReviewsMap.values());
+      console.log(`Found ${currentReviews.length} total reviews, ${newReviews.length} match criteria...`);
+
+      if (newReviews.length >= limit) {
+        finalReviews = newReviews.slice(0, limit);
+        break;
+      }
+
+      // 3. Scroll modal down
       await page.evaluate(() => {
-
-        const modal = document.querySelector(
-          '[role="dialog"]'
-        );
-
+        const modal = document.querySelector('[role="dialog"]');
         if (modal) {
           modal.scrollBy(0, 2000);
         } else {
           window.scrollBy(0, 2000);
         }
-
       });
 
-      await new Promise(resolve =>
-        setTimeout(resolve, 2500)
-      );
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      scrollAttempts++;
+
+      finalReviews = newReviews;
     }
 
-    // WAIT FOR REVIEWS
-    await page.waitForFunction(() => {
-
-      return document.querySelectorAll(
-        'div[data-review-id]'
-      ).length > 0;
-
-    }, {
-      timeout: 60000
-    });
-
-    console.log('Review cards loaded');
-
-    // EXTRACT REVIEWS
-    const reviews = await page.$$eval(
-      'div[data-review-id]',
-      (cards, limit) => {
-
-        const results = [];
-        const uniqueReviews = new Set();
-
-        for (const card of cards) {
-
-          try {
-
-            // SKIP HOST RESPONSE BLOCKS
-            const responseHeading =
-              card.querySelector('h2')
-                ?.innerText || '';
-
-            if (
-              responseHeading
-                .toLowerCase()
-                .includes('response from')
-            ) {
-              continue;
-            }
-
-            // REVIEWER NAME
-            const reviewerName =
-              card.querySelector(
-                'h2[aria-level="2"]'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            if (!reviewerName) {
-              continue;
-            }
-
-            // REVIEW DATE
-            let reviewDate = '';
-
-            const possibleDates =
-              card.querySelectorAll(
-                'div[class*="1h3mmnw"]'
-              );
-
-            possibleDates.forEach(el => {
-
-              const text =
-                el.innerText?.trim() || '';
-
-              if (
-                text.includes('2025') ||
-                text.includes('2026')
-              ) {
-                reviewDate = text;
-              }
-
-            });
-
-            // REVIEW TEXT
-            const reviewText =
-              card.querySelector(
-                '.ljci3ej'
-              )
-                ?.innerText
-                ?.trim() || '';
-
-            if (!reviewText) {
-              continue;
-            }
-
-            // RATING
-            let rating = null;
-
-            const ratingLabel =
-              card.querySelector(
-                'span[aria-hidden="true"]'
-              )
-                ?.innerText || '';
-
-            if (
-              ratingLabel.toLowerCase().includes('5')
-            ) {
-              rating = 5;
-            }
-
-            // UNIQUE CHECK
-            const uniqueKey =
-              reviewerName + reviewText;
-
-            if (uniqueReviews.has(uniqueKey)) {
-              continue;
-            }
-
-            uniqueReviews.add(uniqueKey);
-
-            results.push({
-              reviewerName,
-              rating,
-              reviewDate,
-              reviewText
-            });
-
-            if (results.length >= limit) {
-              break;
-            }
-
-          } catch (e) { }
-        }
-
-        return results;
-
-      },
-      limit
-    );
-
-    console.log('Airbnb Reviews Extracted:', reviews);
+    console.log('Airbnb Reviews Extracted (Deduplicated & New):', finalReviews);
 
     return {
       success: true,
-      totalReviews: reviews.length,
-      reviews
+      totalReviews: finalReviews.length,
+      reviews: finalReviews
     };
 
   } catch (err) {
-
     console.error('Airbnb Scraper Error:', err);
-
     return {
       success: false,
       message: err.message
