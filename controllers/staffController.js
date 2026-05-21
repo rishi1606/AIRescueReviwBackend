@@ -21,17 +21,8 @@ exports.addStaff = async (req, res, next) => {
     let { name, email, password, role, department } = req.body;
     
     // Validation
-    if (!name || !department) {
-      return res.status(400).json({ success: false, error: "Name and department are required" });
-    }
-
-    // Auto-generate credentials if not provided
-    if (!email) {
-      const slug = name.toLowerCase().replace(/ /g, ".");
-      email = `${slug}.${Date.now()}@internal.hotel`;
-    }
-    if (!password) {
-      password = "password123"; // Default for staff added by GM
+    if (!name || !email || !password || !department) {
+      return res.status(400).json({ success: false, error: "Name, email, password, and department are required" });
     }
 
     const existing = await Staff.findOne({ email });
@@ -50,6 +41,20 @@ exports.addStaff = async (req, res, next) => {
       inviteStatus: "Active"
     });
     await staff.save();
+    
+    // Fetch hotel name
+    const Hotel = require("../models/Hotel");
+    const hotel = await Hotel.findById(req.user.hotel_id);
+    const hotel_name = hotel ? hotel.hotel_name : "ReviewRescue Partner Hotel";
+
+    // Send invitation email using the already-configured utility
+    const { sendInvitationEmail } = require("../utils/emailService");
+    await sendInvitationEmail(email, {
+      hotel_name,
+      staff_name: name,
+      email,
+      password // Plain password to let them log in
+    });
     
     const response = staff.toObject();
     delete response.password;

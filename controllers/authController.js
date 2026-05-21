@@ -6,12 +6,12 @@ const jwt = require("jsonwebtoken");
 exports.register = async (req, res, next) => {
   try {
     const { name, email, password, role, department, hotel_name } = req.body;
-    
+
     let staff = await Staff.findOne({ email });
     if (staff) return res.status(400).json({ success: false, error: "Staff already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     // Create Hotel first
     const hotel = new Hotel({
       hotel_name,
@@ -35,12 +35,13 @@ exports.register = async (req, res, next) => {
     await hotel.save();
 
     const token = jwt.sign(
-      { 
-        id: staff._id, 
+      {
+        id: staff._id,
         hotel_id: hotel._id,
-        role: staff.role
-      }, 
-      process.env.JWT_SECRET, 
+        role: staff.role,
+        department: staff.department
+      },
+      process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
@@ -73,12 +74,13 @@ exports.login = async (req, res, next) => {
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
     const token = jwt.sign(
-      { 
-        id: staff._id, 
-        hotel_id: staff.hotelId?._id || staff.hotelId, 
-        role: staff.role 
-      }, 
-      process.env.JWT_SECRET, 
+      {
+        id: staff._id,
+        hotel_id: staff.hotelId?._id || staff.hotelId,
+        role: staff.role,
+        department: staff.department
+      },
+      process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
@@ -116,11 +118,11 @@ exports.updateMe = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
     const staff = await Staff.findById(req.user.id);
-    
+
     if (name) staff.name = name;
     if (email) staff.email = email;
     if (password) staff.password = await bcrypt.hash(password, 10);
-    
+
     await staff.save();
     res.json({ success: true, data: staff });
   } catch (err) {

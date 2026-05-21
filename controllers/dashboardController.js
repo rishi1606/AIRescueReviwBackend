@@ -1,10 +1,36 @@
 const Review = require("../models/Review");
 const Ticket = require("../models/Ticket");
+const Staff = require("../models/Staff");
 const mongoose = require("mongoose");
+
+// Helper function to extract user department for scoping
+async function getUserDepartment(req) {
+  if (req.user.role === "staff" || req.user.role === "dept_head") {
+    let userDept = req.user.department;
+    if (!userDept) {
+      const staff = await Staff.findById(req.user.id);
+      if (staff) userDept = staff.department;
+    }
+    return userDept;
+  }
+  return null;
+}
 
 exports.getStats = async (req, res, next) => {
   try {
     const hotel_id = req.user.hotel_id;
+    const userDept = await getUserDepartment(req);
+
+    // Build the query matches
+    let reviewQuery = { hotel_id };
+    let ticketQuery = { hotel_id };
+    let ratingMatch = { hotel_id: new mongoose.Types.ObjectId(hotel_id) };
+
+    if (userDept) {
+      reviewQuery.primary_department = userDept;
+      ticketQuery.department = userDept;
+      ratingMatch.primary_department = userDept;
+    }
 
     const [
       totalReviews,
@@ -17,18 +43,18 @@ exports.getStats = async (req, res, next) => {
       approved,
       flagged
     ] = await Promise.all([
-      Review.countDocuments({ hotel_id }),
+      Review.countDocuments(reviewQuery),
       Review.aggregate([
-        { $match: { hotel_id: new mongoose.Types.ObjectId(hotel_id) } },
+        { $match: ratingMatch },
         { $group: { _id: null, avg: { $avg: "$rating" } } }
       ]),
-      Review.countDocuments({ hotel_id, urgency: "High" }),
-      Review.countDocuments({ hotel_id, escalation_risk: true }),
-      Review.countDocuments({ hotel_id, sentiment: "Mixed" }),
-      Review.countDocuments({ hotel_id, sentiment: "Neutral" }),
-      Ticket.countDocuments({ hotel_id, status: "Resolved" }),
-      Review.countDocuments({ hotel_id, status: "Approved" }),
-      Review.countDocuments({ hotel_id, is_suspicious: true })
+      Review.countDocuments({ ...reviewQuery, urgency: "High" }),
+      Review.countDocuments({ ...reviewQuery, escalation_risk: true }),
+      Review.countDocuments({ ...reviewQuery, sentiment: "Mixed" }),
+      Review.countDocuments({ ...reviewQuery, sentiment: "Neutral" }),
+      Ticket.countDocuments({ ...ticketQuery, status: "Resolved" }),
+      Review.countDocuments({ ...reviewQuery, status: "Approved" }),
+      Review.countDocuments({ ...reviewQuery, is_suspicious: true })
     ]);
 
     res.json({
@@ -59,13 +85,18 @@ exports.getSentimentTrend = async (req, res, next) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
+    const userDept = await getUserDepartment(req);
+    let matchStage = { 
+      hotel_id: new mongoose.Types.ObjectId(hotel_id),
+      review_date: { $gte: startDate.toISOString() }
+    };
+
+    if (userDept) {
+      matchStage.primary_department = userDept;
+    }
+
     const trend = await Review.aggregate([
-      { 
-        $match: { 
-          hotel_id: new mongoose.Types.ObjectId(hotel_id),
-          review_date: { $gte: startDate.toISOString() }
-        } 
-      },
+      { $match: matchStage },
       {
         $group: {
           _id: { $substr: ["$review_date", 0, 10] },
@@ -86,7 +117,15 @@ exports.getSentimentTrend = async (req, res, next) => {
 
 exports.getRecentReviews = async (req, res, next) => {
   try {
-    const reviews = await Review.find({ hotel_id: req.user.hotel_id })
+    const hotel_id = req.user.hotel_id;
+    const userDept = await getUserDepartment(req);
+
+    let query = { hotel_id };
+    if (userDept) {
+      query.primary_department = userDept;
+    }
+
+    const reviews = await Review.find(query)
       .sort({ createdAt: -1 })
       .limit(5);
     res.json({ success: true, data: reviews });

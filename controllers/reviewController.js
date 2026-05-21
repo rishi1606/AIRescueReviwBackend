@@ -9,7 +9,20 @@ exports.getReviews = async (req, res, next) => {
     let query = { hotel_id: req.user.hotel_id };
 
     if (sentiment && sentiment !== "ALL") query.sentiment = sentiment;
-    if (department && department !== "ALL") query.primary_department = department;
+
+    // Scoping for standard staff and department heads
+    if (req.user.role === "staff" || req.user.role === "dept_head") {
+      let userDept = req.user.department;
+      if (!userDept) {
+        const staff = await Staff.findById(req.user.id);
+        if (staff) userDept = staff.department;
+      }
+      if (userDept) {
+        query.primary_department = userDept;
+      }
+    } else {
+      if (department && department !== "ALL") query.primary_department = department;
+    }
     if (urgency && urgency !== "ALL") query.urgency = urgency;
     if (status && status !== "ALL") query.status = status;
     if (platform && platform !== "ALL") query.platform = platform;

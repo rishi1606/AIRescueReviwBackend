@@ -1,13 +1,29 @@
 const Review = require("../models/Review");
 const Ticket = require("../models/Ticket");
+const Staff = require("../models/Staff");
 
 exports.getSummary = async (req, res, next) => {
   try {
     const { dateStart, dateEnd } = req.query;
     const hotel_id = req.user.hotel_id;
 
+    // Scoping for standard staff and department heads
+    let userDept = null;
+    if (req.user.role === "staff" || req.user.role === "dept_head") {
+      userDept = req.user.department;
+      if (!userDept) {
+        const staff = await Staff.findById(req.user.id);
+        if (staff) userDept = staff.department;
+      }
+    }
+
     let reviewQuery = { hotel_id };
     let ticketQuery = { hotel_id };
+
+    if (userDept) {
+      reviewQuery.primary_department = userDept;
+      ticketQuery.department = userDept;
+    }
 
     if (dateStart || dateEnd) {
       reviewQuery.review_date = {};
