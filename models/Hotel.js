@@ -48,8 +48,8 @@ const hotelSchema = new mongoose.Schema({
     timezone: { type: String, default: "IST" },
     is_active: { type: Boolean, default: true },
     platforms: { type: mongoose.Schema.Types.Mixed, default: {} },
-    urgent_sync_interval: { type: String, default: "2hr" },
-    low_sync_interval: { type: String, default: "6hr" },
+    urgent_sync_interval: { type: String, default: "5hr" },
+    low_sync_interval: { type: String, default: "10hr" },
     last_sync_status: { type: String, default: "never" },
     last_sync_time: { type: Date },
     max_reviews_per_sync: { type: Number, default: 5 }
