@@ -2,8 +2,8 @@ name: Scrape High Urgency Reviews
 
 on:
   schedule:
-    # Runs every 5 hours
-    - cron: '0 */5 * * *'
+    # Runs every 5 minutes for testing
+    - cron: '0 */7 * * *'
   workflow_dispatch: # Allows manual trigger from GH UI
 
 jobs:

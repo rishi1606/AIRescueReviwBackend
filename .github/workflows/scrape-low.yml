@@ -2,8 +2,8 @@ name: Scrape Low Urgency Reviews
 
 on:
   schedule:
-    # Runs every 10 hours
-    - cron: '0 */10 * * *'
+    # Runs every 6 hours. Adjust as needed (e.g. '0 */6 * * *')
+    - cron: '0 */11 * * *'
   workflow_dispatch: # Allows manual trigger from GH UI
 
 jobs:
