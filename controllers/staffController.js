@@ -42,20 +42,6 @@ exports.addStaff = async (req, res, next) => {
     });
     await staff.save();
     
-    // Fetch hotel name
-    const Hotel = require("../models/Hotel");
-    const hotel = await Hotel.findById(req.user.hotel_id);
-    const hotel_name = hotel ? hotel.hotel_name : "ReviewRescue Partner Hotel";
-
-    // Send invitation email using the already-configured utility
-    const { sendInvitationEmail } = require("../utils/emailService");
-    await sendInvitationEmail(email, {
-      hotel_name,
-      staff_name: name,
-      email,
-      password // Plain password to let them log in
-    });
-    
     const response = staff.toObject();
     delete response.password;
     res.status(201).json({ success: true, data: response });
