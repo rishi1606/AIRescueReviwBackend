@@ -1,25 +1,25 @@
 const mongoose = require("mongoose");
 
 const hotelSchema = new mongoose.Schema({
-  hotel_name: { 
-    type: String, 
+  hotel_name: {
+    type: String,
     required: true,
     minlength: 3
   },
   city: { type: String },
   address: { type: String },
-  number_of_rooms: { 
-    type: Number, 
-    required: true 
+  number_of_rooms: {
+    type: Number,
+    required: true
   },
   star_category: { type: String },
   timezone: { type: String, default: "UTC" },
   platforms: {
     type: [String],
-    default: ["Google", "TripAdvisor", "Booking.com", "Yelp"]
+    default: ["Google", "Agoda", "Booking.com", "Airbnb"]
   },
   contact_email: { type: String }, // For escalations
-  
+
   // SLA & AI Settings
   slaConfig: {
     high: { type: Number, default: 4 },
@@ -54,7 +54,7 @@ const hotelSchema = new mongoose.Schema({
     last_sync_time: { type: Date },
     max_reviews_per_sync: { type: Number, default: 5 }
   }],
-  
+
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }
 }, { timestamps: true });
 

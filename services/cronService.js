@@ -124,11 +124,11 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
   const scrapers = {
     'Booking.com': openBookingReviews,
     'Google': openGoogleMaps,
-    'Expedia': openExpediaReviews,
+    // 'Expedia': openExpediaReviews,
     'Agoda': openAgodaReviews,
     'Airbnb': openAirbnbReviews,
-    'Hotels.com': openHotelsReviews,
-    'TripAdvisor': null // Not implemented yet
+    // 'Hotels.com': openHotelsReviews,
+    // 'TripAdvisor': null // Not implemented yet
   };
 
   for (const [platform, url] of Object.entries(platforms)) {
@@ -140,7 +140,7 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
     try {
       const limit = prop.max_reviews_per_sync || 5;
       const isHeadless = platform === 'Google' || platform === 'Booking.com';
-      
+
       const existingDocs = await Review.find({ hotel_id, platform }).select('reviewer_name review_text');
       const existingKeys = existingDocs.map(r => (r.reviewer_name || "") + (r.review_text || ""));
 
