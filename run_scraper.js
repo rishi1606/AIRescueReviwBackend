@@ -27,13 +27,8 @@ async function runScraper() {
           continue;
         }
 
-        if (tier === 'HIGH') {
-          console.log(`[GH-Action] Running HIGH tier scrape for ${prop.name} (1-3 stars)`);
-          await processPropertyTier(hotel._id, prop, 'URGENT', 1, 3);
-        } else if (tier === 'LOW') {
-          console.log(`[GH-Action] Running LOW tier scrape for ${prop.name} (4-5 stars)`);
-          await processPropertyTier(hotel._id, prop, 'LOW', 4, 5);
-        }
+        console.log(`[GH-Action] Running unified scrape for ${prop.name} (1-5 stars)`);
+        await processPropertyTier(hotel._id, prop, 'ALL', 1, 5);
       }
     }
 

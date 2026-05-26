@@ -1,0 +1,33 @@
+name: Unified Review Scraper
+
+on:
+  schedule:
+    # Runs every 5 hours (matching the property sync schedule)
+    - cron: '0 */5 * * *'
+  workflow_dispatch: # Allows manual trigger from GH UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # Puppeteer dependencies required in GH Actions ubuntu runners
+      - name: Install Puppeteer Dependencies
+        run: npx puppeteer browsers install chrome
+
+      - name: Run Unified Review Scraper
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: node run_scraper.js

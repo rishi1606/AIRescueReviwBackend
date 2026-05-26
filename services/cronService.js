@@ -66,21 +66,13 @@ const initCronJobs = async () => {
   console.log(`[Cron] Found ${activeProps.length} active properties.`);
 
   activeProps.forEach((prop, stagger_index) => {
-    // URGENT urgency (1-3★): dynamic per-property interval, 15 min gap
-    const urgentPattern = getCronPattern(prop.urgent_sync_interval || '1hr', stagger_index * 15);
-    console.log(`[Cron][${prop.name}] Scheduling URGENT cycle with interval ${prop.urgent_sync_interval || '1hr'} -> Pattern: ${urgentPattern} (IST)`);
-    const urgentTask = cron.schedule(urgentPattern, async () => {
-      await processPropertyTier(hotel._id, prop, 'URGENT', 1, 3);
+    // Unified review sync (1-5★): dynamic per-property interval, 15 min gap
+    const syncPattern = getCronPattern(prop.urgent_sync_interval || '5hr', stagger_index * 15);
+    console.log(`[Cron][${prop.name}] Scheduling unified sync cycle with interval ${prop.urgent_sync_interval || '5hr'} -> Pattern: ${syncPattern} (IST)`);
+    const syncTask = cron.schedule(syncPattern, async () => {
+      await processPropertyTier(hotel._id, prop, 'ALL', 1, 5);
     }, { timezone: "Asia/Kolkata" });
-    activeCrons.push(urgentTask);
-
-    // LOW urgency (4-5★): dynamic per-property interval, 20 min gap
-    const lowPattern = getCronPattern(prop.low_sync_interval || '6hr', stagger_index * 20);
-    console.log(`[Cron][${prop.name}] Scheduling LOW cycle with interval ${prop.low_sync_interval || '6hr'} -> Pattern: ${lowPattern} (IST)`);
-    const lowTask = cron.schedule(lowPattern, async () => {
-      await processPropertyTier(hotel._id, prop, 'LOW', 4, 5);
-    }, { timezone: "Asia/Kolkata" });
-    activeCrons.push(lowTask);
+    activeCrons.push(syncTask);
   });
 };
 
