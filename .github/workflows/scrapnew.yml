@@ -1,4 +1,4 @@
-name:Scraper View
+name: Scraper View
 
 on:
   schedule:
