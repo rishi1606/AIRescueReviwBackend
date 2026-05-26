@@ -1,30 +1,30 @@
-name: Unified Review Scraper
+name: Unified Scraper
 
 on:
   schedule:
-    # Runs every 5 hours (matching the property sync schedule)
     - cron: '0 */5 * * *'
-  workflow_dispatch: # Allows manual trigger from GH UI
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 20
+          cache: npm
 
       - name: Install Dependencies
         run: npm install
 
-      # Puppeteer dependencies required in GH Actions ubuntu runners
-      - name: Install Puppeteer Dependencies
-        run: npx puppeteer browsers install chrome
+      - name: Install Chrome
+        run: npx puppeteer browsers install chrome --path=/tmp/chrome
 
       - name: Run Unified Review Scraper
         env:
