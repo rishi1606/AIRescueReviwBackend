@@ -12,23 +12,22 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-          cache: npm
+          
 
       - name: Install Dependencies
         run: npm install
 
-      - name: Install Chrome
-        run: npx puppeteer browsers install chrome --path=/tmp/chrome
+      - name: Install Puppeteer Dependencies
+        run: npx puppeteer browsers install chrome
 
       - name: Run Unified Review Scraper
         env:
