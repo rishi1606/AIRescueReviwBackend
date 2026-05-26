@@ -1,7 +1,8 @@
+require("dotenv").config();
 const mongoose = require("mongoose");
 const ImportBatch = require("./models/ImportBatch");
 const Review = require("./models/Review");
-require("dotenv").config();
+
 
 async function check() {
   await mongoose.connect(process.env.MONGO_URI);

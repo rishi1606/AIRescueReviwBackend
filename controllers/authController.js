@@ -12,12 +12,16 @@ exports.register = async (req, res, next) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create Hotel first
-    const hotel = new Hotel({
-      hotel_name,
-      created_by: null // Will update after staff creation
-    });
-    await hotel.save();
+    // Reuse existing hotel or create first
+    let hotel = await Hotel.findOne();
+    const isNewHotel = !hotel;
+    if (isNewHotel) {
+      hotel = new Hotel({
+        hotel_name,
+        created_by: null // Will update after staff creation
+      });
+      await hotel.save();
+    }
 
     staff = new Staff({
       name,
@@ -31,8 +35,10 @@ exports.register = async (req, res, next) => {
     });
     await staff.save();
 
-    hotel.created_by = staff._id;
-    await hotel.save();
+    if (isNewHotel || !hotel.created_by) {
+      hotel.created_by = staff._id;
+      await hotel.save();
+    }
 
     const token = jwt.sign(
       {
@@ -73,6 +79,23 @@ exports.login = async (req, res, next) => {
     const isMatch = await bcrypt.compare(password, staff.password);
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
+    // Ensure staff has a valid hotel
+    if (!staff.hotelId) {
+      let hotel = await Hotel.findOne();
+      if (!hotel) {
+        hotel = new Hotel({
+          hotel_name: "Default Hotel",
+          number_of_rooms: 50,
+          city: "Default City"
+        });
+        await hotel.save();
+      }
+      console.log(hotel, 'kkdgdkgkdg')
+      staff.hotelId = hotel._id;
+      await staff.save();
+      await staff.populate("hotelId");
+    }
+
     const token = jwt.sign(
       {
         id: staff._id,
@@ -108,6 +131,20 @@ exports.login = async (req, res, next) => {
 exports.getMe = async (req, res, next) => {
   try {
     const staff = await Staff.findById(req.user.id).populate("hotelId");
+    if (staff && !staff.hotelId) {
+      let hotel = await Hotel.findOne();
+      if (!hotel) {
+        hotel = new Hotel({
+          hotel_name: "Default Hotel",
+          number_of_rooms: 50,
+          city: "Default City"
+        });
+        await hotel.save();
+      }
+      staff.hotelId = hotel._id;
+      await staff.save();
+      await staff.populate("hotelId");
+    }
     res.json({ success: true, data: staff });
   } catch (err) {
     next(err);

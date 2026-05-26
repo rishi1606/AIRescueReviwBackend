@@ -5,14 +5,34 @@ const { initCronJobs } = require("../services/cronService");
 
 exports.getHotel = async (req, res, next) => {
   try {
-    const hotel = await Hotel.findById(req.user.hotel_id).lean();
-    if (!hotel) {
-      return res.status(404).json({ success: false, message: "Hotel not found" });
+    let hotel;
+    if (req.user && req.user.hotel_id) {
+      hotel = await Hotel.findById(req.user.hotel_id).lean();
     }
+    if (!hotel) {
+      hotel = await Hotel.findOne().lean();
+    }
+    if (!hotel) {
+      const newHotel = new Hotel({
+        hotel_name: "Default Hotel",
+        number_of_rooms: 50,
+        city: "Default City",
+        properties: [
+          {
+            name: "Main Property",
+            city: "Default City",
+            rooms: 50
+          }
+        ]
+      });
+      await newHotel.save();
+      hotel = newHotel.toObject();
+    }
+
     if (hotel.properties) {
       for (const prop of hotel.properties) {
         prop.review_count = await Review.countDocuments({
-          hotel_id: req.user.hotel_id,
+          hotel_id: hotel._id,
           property_name: prop.name
         });
       }
@@ -48,28 +68,37 @@ exports.updateHotel = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Number of rooms must be a number" });
     }
 
-    const hotel = await Hotel.findByIdAndUpdate(
-      req.user.hotel_id, 
-      { 
-        hotel_name, 
-        city, 
-        address, 
-        number_of_rooms, 
-        star_category, 
-        timezone, 
-        platforms, 
-        contact_email,
-        slaConfig,
-        deptSlaConfig,
-        aiConfig,
-        properties
-      }, 
-      { new: true, runValidators: true }
-    );
-
-    if (!hotel) {
-      return res.status(404).json({ success: false, message: "Hotel not found" });
+    let hotelId = req.user && req.user.hotel_id;
+    let hotel;
+    if (hotelId) {
+      hotel = await Hotel.findById(hotelId);
     }
+    if (!hotel) {
+      hotel = await Hotel.findOne();
+    }
+    if (!hotel) {
+      hotel = new Hotel({
+        hotel_name: "Default Hotel",
+        number_of_rooms: 50,
+        city: "Default City"
+      });
+      await hotel.save();
+    }
+
+    if (hotel_name !== undefined) hotel.hotel_name = hotel_name;
+    if (city !== undefined) hotel.city = city;
+    if (address !== undefined) hotel.address = address;
+    if (number_of_rooms !== undefined) hotel.number_of_rooms = number_of_rooms;
+    if (star_category !== undefined) hotel.star_category = star_category;
+    if (timezone !== undefined) hotel.timezone = timezone;
+    if (platforms !== undefined) hotel.platforms = platforms;
+    if (contact_email !== undefined) hotel.contact_email = contact_email;
+    if (slaConfig !== undefined) hotel.slaConfig = slaConfig;
+    if (deptSlaConfig !== undefined) hotel.deptSlaConfig = deptSlaConfig;
+    if (aiConfig !== undefined) hotel.aiConfig = aiConfig;
+    if (properties !== undefined) hotel.properties = properties;
+
+    await hotel.save();
 
     // Dynamic auto-reload of crons!
     try {
