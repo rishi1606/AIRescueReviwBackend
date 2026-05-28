@@ -19,13 +19,159 @@ function removeDuplicateReviews(reviews) {
   });
 }
 
-
 /**
- * Google Maps Review Scraper
+ * Helper to check if a review date is older than 3 months from today.
  */
+function isOlderThan3Months(dateStr) {
+  try {
+    if (!dateStr || typeof dateStr !== 'string') {
+      return false;
+    }
 
+    // CLEAN INPUT
+    const clean = dateStr
+      .trim()
+      .toLowerCase()
+      .replace(/^(reviewed|reviewed on|posted on|stayed in)\s*:?\s*/i, '')
+      .replace(/\s+on\s+.*$/, '')
+      .trim();
 
-exports.openGoogleMaps = async (url, limit = 30, headless = true, existingKeys = [], minRating = 1, maxRating = 5) => {
+    if (!clean) {
+      return false;
+    }
+
+    // DEBUG
+    console.log('Original Date:', dateStr);
+    console.log('Cleaned Date:', clean);
+
+    // 3 MONTHS AGO DATE
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    // =========================
+    // VERY RECENT DATES
+    // =========================
+    if (
+      /\b(hour|minute|second|today|yesterday|now)\b/.test(clean) ||
+      /\b\d+\s+(hour|minute|second|day|week)s?\b/.test(clean) ||
+      /\ba\s+(day|hour|minute|second|week|month)\b/.test(clean) ||
+      /\bthis\s+(week|month)\b/.test(clean) ||
+      /\blast\s+(week|month)\b/.test(clean) ||
+      /\b[1-3]\s+months?\b/.test(clean)
+    ) {
+      return false;
+    }
+
+    // =========================
+    // X MONTHS AGO
+    // =========================
+    if (clean.includes('month')) {
+      const match = clean.match(/(\d+)\s+months?/);
+
+      if (match) {
+        return parseInt(match[1], 10) > 3;
+      }
+
+      return false;
+    }
+
+    // =========================
+    // YEARS AGO
+    // =========================
+    if (clean.includes('year')) {
+      return true;
+    }
+
+    // =========================
+    // FORMAT:
+    // march 2025
+    // =========================
+    const monthYearMatch = clean.match(
+      /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})$/
+    );
+
+    if (monthYearMatch) {
+      const parsed = new Date(
+        `1 ${monthYearMatch[1]} ${monthYearMatch[2]}`
+      );
+
+      if (!isNaN(parsed)) {
+        console.log('Parsed Month-Year:', parsed);
+        return parsed < threeMonthsAgo;
+      }
+    }
+
+    // =========================
+    // FORMAT:
+    // 15 may 2026
+    // =========================
+    const dmyMatch = clean.match(
+      /^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})$/
+    );
+
+    if (dmyMatch) {
+      const parsed = new Date(
+        `${dmyMatch[2]} ${dmyMatch[1]}, ${dmyMatch[3]}`
+      );
+
+      if (!isNaN(parsed)) {
+        console.log('Parsed DMY:', parsed);
+        return parsed < threeMonthsAgo;
+      }
+    }
+
+    // =========================
+    // FORMAT:
+    // may 15, 2026
+    // =========================
+    const mdyMatch = clean.match(
+      /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4}$/
+    );
+
+    if (mdyMatch) {
+      const parsed = new Date(clean);
+
+      if (!isNaN(parsed)) {
+        console.log('Parsed MDY:', parsed);
+        return parsed < threeMonthsAgo;
+      }
+    }
+
+    // =========================
+    // FALLBACK PARSE
+    // =========================
+    const fallbackParsed = new Date(clean);
+
+    if (!isNaN(fallbackParsed)) {
+      console.log('Fallback Parsed:', fallbackParsed);
+      return fallbackParsed < threeMonthsAgo;
+    }
+
+    // =========================
+    // UNKNOWN FORMAT
+    // =========================
+    console.warn(
+      `[isOlderThan3Months] Could not parse date: "${dateStr}"`
+    );
+
+    // SAFEST OPTION:
+    // treat unknown dates as RECENT
+    return false;
+
+  } catch (err) {
+    console.error('Date Parsing Error:', err);
+    return false;
+  }
+}
+
+exports.openGoogleMaps = async (
+  url,
+  limit = 30,
+  headless = true,
+  existingKeys = [],
+  minRating = 1,
+  maxRating = 5
+) => {
   console.log(`Launching browser (Headless: ${headless})...`);
 
   try {
@@ -43,104 +189,194 @@ exports.openGoogleMaps = async (url, limit = 30, headless = true, existingKeys =
     const page = await browser.newPage();
 
     await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     );
 
     console.log(`Opening URL: ${url}`);
 
-    // STEP 1 — Open Google Page
     await page.goto(url, {
-      waitUntil: 'networkidle2',
+      waitUntil: "networkidle2",
       timeout: 60000
     });
 
-    console.log('Website fully loaded');
+    console.log("Website fully loaded");
 
-    // STEP 2 — Click Reviews Tab
+    // STEP 1 — Click Reviews Tab
     await page.waitForSelector(
       'div[role="tab"][aria-label="Reviews"]',
       { timeout: 20000 }
     );
 
-    await page.click(
-      'div[role="tab"][aria-label="Reviews"]'
-    );
+    await page.click('div[role="tab"][aria-label="Reviews"]');
+    console.log("Reviews tab clicked");
 
-    console.log('Reviews tab clicked');
+    await page.waitForSelector(".Svr5cf.bKhjM", { timeout: 20000 });
+    console.log("Reviews loaded");
 
-    // STEP 3 — Scroll Loop to Load More Reviews
+    await new Promise(r => setTimeout(r, 3000));
+
+    // STEP 2 — Sort by Most Recent
+    let sortSuccess = false;
+
+    try {
+      console.log("Opening sort dropdown...");
+
+      await page.waitForSelector(".MocG8c.o7IkCf.LMgvRb.KKjvXb", { timeout: 15000 });
+      await page.click(".MocG8c.o7IkCf.LMgvRb.KKjvXb");
+
+      console.log("Sort dropdown clicked");
+      await new Promise(r => setTimeout(r, 2000));
+
+      const clicked = await page.evaluate(() => {
+        const options = Array.from(document.querySelectorAll('div[role="option"]'));
+        for (const option of options) {
+          const text = option.innerText?.trim()?.toLowerCase();
+          if (text && text.includes("most recent")) {
+            option.scrollIntoView({ block: "center" });
+            option.click();
+            return true;
+          }
+        }
+        return false;
+      });
+
+      console.log("Most recent clicked:", clicked);
+
+      if (clicked) {
+        sortSuccess = true;
+        console.log("Waiting for reviews to re-render after sort...");
+        await new Promise(r => setTimeout(r, 8000));
+        console.log("Sorted reviews loaded");
+      }
+
+    } catch (sortErr) {
+      console.log("Sort failed:", sortErr.message);
+    }
+
+    if (!sortSuccess) {
+      console.log("Most recent sort failed. Skipping scrape.");
+      return { success: true, totalReviews: 0, reviews: [] };
+    }
+
+    // STEP 3 — Extraction Loop
     let scrollAttempts = 0;
     const maxScrollAttempts = 40;
     const existingSet = new Set(existingKeys || []);
-    let finalReviews = [];
+    const finalReviewsMap = new Map();
+    let noNewReviewLoads = 0;
 
-    console.log(`Scrolling and extracting to guarantee ${limit} new reviews within ${minRating}-${maxRating} stars...`);
+    console.log(`Starting extraction (limit: ${limit})`);
 
     while (scrollAttempts < maxScrollAttempts) {
-      // 1. Click any visible 'Read more' buttons to ensure we get full text
-      const readMoreButtons = await page.$$('span.Jmi7d.TJUuge');
+      console.log(`Scroll Attempt ${scrollAttempts + 1}`);
+
+      // Click Read More buttons
+      const readMoreButtons = await page.$$("span.Jmi7d.TJUuge");
       for (const btn of readMoreButtons) {
         try {
-          // Check if it's already expanded (the button disappears or becomes hidden, but just in case)
-          const isVisible = await btn.evaluate(b => b.offsetWidth > 0 && b.offsetHeight > 0);
-          if (isVisible) {
-            await btn.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-            await new Promise(r => setTimeout(r, 200));
+          const visible = await btn.evaluate(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+          if (visible) {
             await btn.click();
             await new Promise(r => setTimeout(r, 200));
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
-      // 2. Extract current reviews on the page
-      let currentReviews = await page.$$eval('.Svr5cf.bKhjM', (cards) => {
+      // Extract reviews
+      const currentReviews = await page.$$eval(".Svr5cf.bKhjM", cards => {
         return cards.map(card => {
-          const reviewerName = card.querySelector('.DHIhE.QB2Jof')?.innerText?.trim() || '';
-          const ratingText = card.querySelector('.GDWaad')?.innerText?.trim() || '';
-          const rating = parseFloat(ratingText.split('/')[0]) || null;
-          const reviewDate = card.querySelector('.iUtr1.CQYfx')?.innerText?.trim() || '';
-          const expandedReview = card.querySelector('div[jsname="NwoMSd"] span')?.innerText?.trim();
-          const shortReview = card.querySelector('div[jsname="kmPxT"] span')?.innerText?.trim();
-          const reviewText = expandedReview || shortReview || '';
-          const stayType = card.querySelector('.ThUm5b span')?.innerText?.trim() || '';
+
+          // Reviewer name
+          const reviewerName =
+            card.querySelector("a.DHIhE.QB2Jof")?.innerText?.trim() ||
+            card.querySelector('a[href*="maps/contrib"]')?.innerText?.trim() || "";
+
+          // Rating
+          const ratingText = card.querySelector(".GDWaad")?.innerText?.trim() || "";
+          const rating = parseFloat(ratingText.split("/")[0]) || null;
+
+          // Date — strip "on Google" suffix
+          const rawDate = card.querySelector("span.iUtr1.CQYfx")?.innerText?.trim() || "";
+          const reviewDate = rawDate.replace(/\s+on\s+.*$/i, "").trim();
+
+          // Review text — from .K7oBsc span (confirmed from HTML)
+          const reviewText =
+            card.querySelector(".K7oBsc span")?.innerText?.trim() ||
+            card.querySelector('div[jsname="NwoMSd"] span')?.innerText?.trim() ||
+            card.querySelector('div[jsname="kmPxT"] span')?.innerText?.trim() ||
+            card.querySelector(".wiI7pd")?.innerText?.trim() || "";
+
+          // Stay type
+          const stayType = card.querySelector(".ThUm5b span")?.innerText?.trim() || "";
 
           return { reviewerName, rating, reviewDate, stayType, reviewText };
         });
       });
 
-      // 3. Filter against DB keys and rating
       const deduplicated = removeDuplicateReviews(currentReviews);
-      const newReviews = deduplicated.filter(r => {
-        const meetsRating = r.rating >= minRating && r.rating <= maxRating;
-        const isNew = !existingSet.has(r.reviewerName + r.reviewText);
-        return meetsRating && isNew;
+
+      console.log("DEDUP DATES:", deduplicated.map(r => ({ name: r.reviewerName, date: r.reviewDate })));
+
+      // Filter
+      const filtered = deduplicated.filter(r => {
+        if (!r.reviewerName) return false;
+        const meetsRating = r.rating === null || (r.rating >= minRating && r.rating <= maxRating);
+        const isNew = !existingSet.has(r.reviewerName + r.reviewDate + r.reviewText);
+        const isNotOlder = !isOlderThan3Months(r.reviewDate);
+        console.log(`[FILTER] ${r.reviewerName} | date: ${r.reviewDate} | older: ${!isNotOlder} | meetsRating: ${meetsRating} | isNew: ${isNew}`);
+        return meetsRating && isNew && isNotOlder;
       });
 
-      console.log(`Found ${currentReviews.length} total reviews, ${newReviews.length} match criteria...`);
+      // Store in map
+      let newlyAdded = 0;
+      for (const review of filtered) {
+        const key = review.reviewerName + review.reviewDate + review.reviewText;
+        if (!finalReviewsMap.has(key)) {
+          finalReviewsMap.set(key, review);
+          newlyAdded++;
+        }
+      }
 
-      if (newReviews.length >= limit) {
-        finalReviews = newReviews.slice(0, limit);
+      const finalReviews = Array.from(finalReviewsMap.values());
+      console.log(`Current visible: ${filtered.length} | Total collected: ${finalReviews.length} | Newly added: ${newlyAdded}`);
+
+      // Stop if limit reached
+      if (finalReviews.length >= limit) {
+        console.log("Limit reached");
         break;
       }
 
-      // 4. Scroll down to load more
-      await page.evaluate(() => {
-        const cards = document.querySelectorAll('.Svr5cf.bKhjM');
-        if (cards.length > 0) {
-          cards[cards.length - 1].scrollIntoView();
-        }
-        window.scrollBy(0, 800);
-      });
+      // Stop if no new reviews loading
+      if (newlyAdded === 0) {
+        noNewReviewLoads++;
+      } else {
+        noNewReviewLoads = 0;
+      }
 
-      await new Promise(r => setTimeout(r, 3000));
+      if (noNewReviewLoads >= 3) {
+        console.log("No new reviews loading. Stopping.");
+        break;
+      }
+
+      // Stop if all reviews older than 3 months
+      const realReviews = deduplicated.filter(r => r.reviewerName && r.reviewDate);
+      const allOlder = realReviews.length > 0 && realReviews.every(r => isOlderThan3Months(r.reviewDate));
+      if (allOlder) {
+        console.log("All reviews older than 3 months. Stopping.");
+        break;
+      }
+
+      // Scroll
+      await page.hover('div[role="feed"]');
+      await page.mouse.wheel({ deltaY: 3500 });
+      console.log("Scrolled reviews");
+
+      await new Promise(r => setTimeout(r, 5000));
       scrollAttempts++;
-      
-      // If we hit the end of the loop but didn't break, update finalReviews with what we have
-      finalReviews = newReviews;
     }
 
-    console.log('Scroll loop finished.');
-    console.log('Reviews Extracted (Deduplicated & New):', finalReviews);
+    let finalReviews = Array.from(finalReviewsMap.values()).slice(0, limit);
+    console.log(`Finished scraping ${finalReviews.length} reviews`);
 
     return {
       success: true,
@@ -149,25 +385,34 @@ exports.openGoogleMaps = async (url, limit = 30, headless = true, existingKeys =
     };
 
   } catch (err) {
-    console.error('Scraper Error:', err);
+    console.error("Scraper Error:", err);
     throw err;
   }
 };
 
-/**
- * Step 1: Open Booking.com and click the Reviews tab
- */
-exports.openBookingReviews = async (url, limit = 3, headless = false, existingKeys = [], minRating = 1, maxRating = 5) => {
+exports.openBookingReviews = async (
+  url,
+  limit = 3,
+  headless = false,
+  existingKeys = [],
+  minRating = 1,
+  maxRating = 5
+) => {
+
   console.log(`Launching browser for Booking (Headless: ${headless})...`);
+  console.log(`LIMIT: ${limit}`);
 
   let finalMin = minRating;
   let finalMax = maxRating;
+
+  // Convert 1-3 star filter correctly
   if (minRating === 1 && maxRating === 3) {
     finalMin = 0;
     finalMax = 3.9;
   }
 
   try {
+
     const browser = await puppeteer.launch({
       headless: true,
       defaultViewport: null,
@@ -187,7 +432,6 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
 
     console.log(`Opening Booking URL: ${url}`);
 
-    // OPEN PAGE
     await page.goto(url, {
       waitUntil: 'networkidle2',
       timeout: 60000
@@ -195,142 +439,169 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
 
     console.log('Booking page fully loaded');
 
-    // WAIT REVIEWS TAB
+    // =========================
+    // CLICK REVIEW TAB
+    // =========================
+
     try {
-      await page.waitForSelector(
-        '#reviews-tab-trigger',
-        {
-          timeout: 10000
-        }
-      );
 
-      // SCROLL TO REVIEWS
-      await page.$eval(
-        '#reviews-tab-trigger',
-        el => {
-          el.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center'
-          });
-        }
-      );
+      await page.waitForSelector('#reviews-tab-trigger', {
+        timeout: 10000
+      });
 
-      await new Promise(resolve =>
-        setTimeout(resolve, 2000)
-      );
+      await page.$eval('#reviews-tab-trigger', el => {
+        el.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        });
+      });
 
-      // CLICK REVIEWS TAB
+      await new Promise(r => setTimeout(r, 2000));
+
       await page.evaluate(() => {
-        const btn = document.querySelector(
-          '#reviews-tab-trigger'
-        );
-        if (btn) {
-          btn.click();
-        }
+        const btn = document.querySelector('#reviews-tab-trigger');
+        if (btn) btn.click();
       });
 
       console.log('Reviews tab clicked');
-    } catch (tabErr) {
-      console.log('⚠️ [Booking.com] Timeout waiting for #reviews-tab-trigger or element not found. Proceeding to look for reviews directly...');
-    }
 
-    // WAIT POPUP
-    await new Promise(resolve =>
-      setTimeout(resolve, 8000)
-    );
-
-    // WAIT REVIEWS
-    try {
-      await page.waitForSelector(
-        '[data-testid="review-card"]',
-        {
-          timeout: 25000
-        }
-      );
     } catch (err) {
-      console.log('⚠️ [Booking.com] Timeout waiting for review cards. The page may have a classic layout, captcha, or zero reviews.');
-      await browser.close();
-      return [];
+      console.log('⚠️ Reviews tab not found. Continuing...');
     }
+
+    await new Promise(r => setTimeout(r, 8000));
+
+    // =========================
+    // WAIT FOR REVIEWS
+    // =========================
+
+    try {
+
+      await page.waitForSelector('[data-testid="review-card"]', {
+        timeout: 25000
+      });
+
+    } catch (err) {
+
+      console.log('⚠️ No review cards found');
+
+      await browser.close();
+
+      return {
+        success: false,
+        message: 'No review cards found'
+      };
+    }
+
+    // =========================
+    // SORT NEWEST FIRST
+    // =========================
+
+    try {
+
+      console.log('Sorting Booking reviews by NEWEST_FIRST');
+
+      await page.waitForSelector(
+        'select[name="reviewListSorters"]',
+        { timeout: 10000 }
+      );
+
+      await page.evaluate(() => {
+
+        const select = document.querySelector(
+          'select[name="reviewListSorters"]'
+        );
+
+        if (select) {
+
+          select.value = 'NEWEST_FIRST';
+
+          select.dispatchEvent(
+            new Event('change', { bubbles: true })
+          );
+        }
+
+      });
+
+      await new Promise(r => setTimeout(r, 7000));
+
+      console.log('Successfully sorted by newest');
+
+    } catch (err) {
+
+      console.log('⚠️ Could not sort:', err.message);
+
+      await browser.close();
+
+      return {
+        success: true,
+        totalReviews: 0,
+        reviews: []
+      };
+    }
+
     const existingSet = new Set(existingKeys || []);
+
     let allReviews = [];
+
     let currentPage = 1;
 
     // =========================
-    // LOOP THROUGH PAGES
+    // LOOP PAGES
     // =========================
 
     while (true) {
 
-      console.log(
-        `Extracting reviews from page ${currentPage}`
-      );
+      console.log(`\n========= PAGE ${currentPage} =========`);
 
-      // WAIT SMALL
-      await new Promise(resolve =>
-        setTimeout(resolve, 3000)
-      );
+      // Scroll reviews section
+      await page.evaluate(() => window.scrollBy(0, 2500));
+      await new Promise(r => setTimeout(r, 2500));
 
-      // EXTRACT REVIEWS
       const currentReviews = await page.$$eval(
         '[data-testid="review-card"]',
         cards => {
 
           const unique = new Set();
+
           const results = [];
 
           for (const card of cards) {
 
             try {
 
-              // REVIEWER NAME
               const reviewerName =
                 card.querySelector('.b08850ce41')
                   ?.innerText
                   ?.trim() || '';
 
-              // REVIEW DATE
               const reviewDate =
-                card.querySelector(
-                  '[data-testid="review-date"]'
-                )
+                card.querySelector('[data-testid="review-date"]')
                   ?.innerText
                   ?.trim() || '';
 
-              // REVIEW TITLE
               const reviewTitle =
-                card.querySelector(
-                  '[data-testid="review-title"]'
-                )
+                card.querySelector('[data-testid="review-title"]')
                   ?.innerText
                   ?.trim() || '';
 
-              // POSITIVE REVIEW
               const positiveReview =
-                card.querySelector(
-                  '[data-testid="review-positive-text"] span'
-                )
+                card.querySelector('[data-testid="review-positive-text"] span')
                   ?.innerText
                   ?.trim() || '';
 
-              // NEGATIVE REVIEW
               const negativeReview =
-                card.querySelector(
-                  '[data-testid="review-negative-text"] span'
-                )
+                card.querySelector('[data-testid="review-negative-text"] span')
                   ?.innerText
                   ?.trim() || '';
 
-              // RATING
               const ratingText =
                 card.querySelector('.f63b14ab7a')
                   ?.innerText
                   ?.trim() || '';
 
-              const rating =
-                parseFloat(ratingText) || null;
+              const rating = parseFloat(ratingText) || null;
 
-              // REVIEW TEXT
               const reviewText = [
                 reviewTitle,
                 positiveReview,
@@ -339,14 +610,11 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
                 .filter(Boolean)
                 .join(' ');
 
-              // SKIP EMPTY
               if (!reviewerName || !reviewText) {
                 continue;
               }
 
-              // UNIQUE CHECK
-              const key =
-                reviewerName + reviewText;
+              const key = reviewerName + reviewText;
 
               if (unique.has(key)) {
                 continue;
@@ -361,30 +629,76 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
                 reviewText
               });
 
-            } catch (e) { }
+            } catch (err) { }
           }
 
           return results;
         }
       );
 
+      console.log(`Reviews found: ${currentReviews.length}`);
+
+      if (!currentReviews.length) {
+        console.log('No reviews on page');
+        break;
+      }
+
+      // =========================
+      // STOP IF ALL REVIEWS OLD
+      // =========================
+
+      const allOlder = currentReviews.every(r =>
+        isOlderThan3Months(r.reviewDate)
+      );
+
+      if (allOlder) {
+
+        console.log('All reviews older than 3 months');
+
+        break;
+      }
+
+      // =========================
+      // FILTER REVIEWS
+      // =========================
+
       const newReviews = currentReviews.filter(r => {
+
+        // Booking is out of 10 → convert to 5 scale
         let normRating = 5;
+
         if (r.rating !== null) {
           normRating = Math.round((r.rating / 2) * 10) / 10;
         }
-        const meetsRating = normRating >= finalMin && normRating <= finalMax;
-        const isNew = !existingSet.has(r.reviewerName + r.reviewText);
-        return meetsRating && isNew;
+
+        const meetsRating =
+          normRating >= finalMin &&
+          normRating <= finalMax;
+
+        const isNew =
+          !existingSet.has(
+            r.reviewerName + r.reviewText
+          );
+
+        const isNotOlder =
+          !isOlderThan3Months(r.reviewDate);
+
+        return (
+          meetsRating &&
+          isNew &&
+          isNotOlder
+        );
       });
 
-      // ADD REVIEWS
-      allReviews = [
-        ...allReviews,
-        ...newReviews
-      ];
+      console.log(`Filtered reviews: ${newReviews.length}`);
 
-      // REMOVE DUPLICATES
+      // =========================
+      // ADD REVIEWS
+      // =========================
+
+      allReviews.push(...newReviews);
+
+      // Remove duplicates globally
       allReviews = allReviews.filter(
         (review, index, self) =>
           index === self.findIndex(r =>
@@ -393,112 +707,97 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
           )
       );
 
-      console.log(
-        `Total reviews collected: ${allReviews.length}`
-      );
+      console.log(`Total collected: ${allReviews.length}`);
 
-      // STOP IF LIMIT REACHED
+      // =========================
+      // LIMIT REACHED
+      // =========================
+
       if (allReviews.length >= limit) {
+
+        console.log('Limit reached');
+
         break;
       }
 
-      // NEXT PAGE NUMBER
+      // =========================
+      // PAGINATION
+      // =========================
+
       currentPage++;
 
-      console.log(
-        `Trying to click page ${currentPage}`
-      );
+      console.log(`Trying page ${currentPage}`);
 
-      // SCROLL DOWN
       for (let i = 0; i < 4; i++) {
 
-        await page.evaluate(() => {
-          window.scrollBy(0, window.innerHeight);
-        });
-
-        await new Promise(resolve =>
-          setTimeout(resolve, 2000)
+        await page.evaluate(() =>
+          window.scrollBy(0, window.innerHeight)
         );
+
+        await new Promise(r => setTimeout(r, 1500));
       }
 
-      // EXTRA WAIT
-      await new Promise(resolve =>
-        setTimeout(resolve, 8000)
-      );
+      await new Promise(r => setTimeout(r, 4000));
 
-      // CLICK NEXT PAGE
-      const clicked = await page.evaluate(
-        (pageNo) => {
+      const clicked = await page.evaluate((pageNo) => {
 
-          const buttons = Array.from(
-            document.querySelectorAll(
-              'li.d8842cf9f4 button'
-            )
+        const buttons = Array.from(
+          document.querySelectorAll('li.d8842cf9f4 button')
+        );
+
+        const targetBtn = buttons.find(btn => {
+
+          const aria =
+            btn.getAttribute('aria-label')
+              ?.trim();
+
+          const text =
+            btn.innerText
+              ?.trim();
+
+          return (
+            aria === String(pageNo) ||
+            text === String(pageNo)
           );
+        });
 
-          const targetBtn = buttons.find(btn => {
+        if (targetBtn) {
 
-            const aria =
-              btn.getAttribute('aria-label')
-                ?.trim();
-
-            const text =
-              btn.innerText?.trim();
-
-            return (
-              aria === String(pageNo) ||
-              aria === ` ${pageNo}` ||
-              text === String(pageNo)
-            );
+          targetBtn.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
           });
 
-          if (targetBtn) {
+          targetBtn.click();
 
-            targetBtn.scrollIntoView({
-              behavior: 'smooth',
-              block: 'center'
-            });
+          return true;
+        }
 
-            targetBtn.click();
+        return false;
 
-            return true;
-          }
+      }, currentPage);
 
-          return false;
+      console.log(`Page clicked: ${clicked}`);
 
-        },
-        currentPage
-      );
-
-      console.log(
-        `Page ${currentPage} clicked:`,
-        clicked
-      );
-
-      // STOP IF NO MORE PAGES
       if (!clicked) {
 
-        console.log(
-          'No more pagination buttons found'
-        );
+        console.log('No more pages');
 
         break;
       }
 
-      // WAIT NEXT PAGE LOAD
-      await new Promise(resolve =>
-        setTimeout(resolve, 8000)
-      );
+      await new Promise(r => setTimeout(r, 8000));
     }
 
-    // FINAL LIMIT
-    const reviews =
-      allReviews.slice(0, limit);
+    // =========================
+    // FINAL REVIEWS
+    // =========================
 
-    console.log(
-      'Final Booking Reviews:',
-      reviews
-    );
+    const reviews = allReviews.slice(0, limit);
+
+    console.log('FINAL REVIEWS:', reviews.length);
+
+    await browser.close();
 
     return {
       success: true,
@@ -508,10 +807,7 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
 
   } catch (err) {
 
-    console.error(
-      'Booking Scraper Error:',
-      err
-    );
+    console.error('Booking Scraper Error:', err);
 
     return {
       success: false,
@@ -520,10 +816,6 @@ exports.openBookingReviews = async (url, limit = 3, headless = false, existingKe
   }
 };
 
-
-/**
- * Mock Booking Scraper
- */
 exports.scrapeBooking = async (url, maxReviews = 20) => {
   console.log(`[MockScraper] Simulating scrape for: ${url}`);
 
@@ -622,7 +914,7 @@ exports.openExpediaReviews = async (url, limit = 20, headless = false, existingK
 
         const ratingText = await card.$eval('h3.uitk-heading', el => el.innerText.trim()).catch(() => '');
         const rating = parseFloat(ratingText.split('/')[0]) || null;
-        
+
         if (rating !== null && (rating < minRating || rating > maxRating)) continue;
 
         const reviewDate = await card.$$eval('.uitk-text', els => {
@@ -706,13 +998,25 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
       await new Promise(r => setTimeout(r, 3000));
     }
 
+    // Select "Most recent" sort option
+    try {
+      console.log('Selecting "Most recent" sort option on Agoda...');
+      const sortSelector = '#review-sort-id, select.Review-sortingSelect, select[data-element-name="reviews-sort-dropdown"]';
+      await page.waitForSelector(sortSelector, { timeout: 15000 });
+      await page.select(sortSelector, '1');
+      console.log('Successfully selected Agoda "Most recent" sorting');
+      await new Promise(r => setTimeout(r, 5000));
+    } catch (sortErr) {
+      console.log('⚠️ [Agoda] Sorting failed or sort dropdown not found:', sortErr.message);
+    }
+
     const existingSet = new Set(existingKeys || []);
     let allCollectedReviews = [];
     let currentPage = 1;
     const uniqueReviews = new Set();
 
     // PAGINATION LOOP
-    while (allCollectedReviews.length < limit && currentPage < 10) {
+    while (currentPage < 10) {
       console.log(`Extracting Agoda reviews from page ${currentPage}...`);
 
       // Wait for content
@@ -721,21 +1025,16 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
       // Extract current page reviews
       const pageReviews = await page.$$eval('div[data-element-name="review-comment"]', (cards) => {
         return cards.map(card => {
-          // Reviewer Name (e.g., "lisa from United States")
           const reviewerName = card.querySelector('[data-info-type="reviewer-name"] strong')?.innerText?.trim() ||
             card.querySelector('.Review-comment-reviewer span')?.innerText?.trim() || '';
 
-          // Rating (e.g., "8.4")
           const ratingText = card.querySelector('.Review-comment-leftScore')?.innerText?.trim() || '';
           const rating = parseFloat(ratingText) || null;
 
-          // Review Date
           const reviewDate = card.querySelector('.Review-statusBar-left span')?.innerText?.trim() || '';
 
-          // Review Title
           const reviewTitle = card.querySelector('[data-testid="review-title"]')?.innerText?.trim() || '';
 
-          // Review Text
           const reviewTextOnly = card.querySelector('[data-testid="review-comment"]')?.innerText?.trim() || '';
           const reviewText = `${reviewTitle} ${reviewTextOnly}`.trim();
 
@@ -743,10 +1042,16 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
         });
       });
 
+      const allOlder = pageReviews.every(r => isOlderThan3Months(r.reviewDate));
+      if (allOlder && pageReviews.length > 0) {
+        console.log('[Agoda] All reviews older than 3 months. Stopping.');
+        break;
+      }
+
       // Filter and Add
       for (const r of pageReviews) {
         if (!r.reviewerName || !r.reviewText) continue;
-        
+
         let normRating = 5;
         if (r.rating !== null) {
           normRating = Math.round((r.rating / 2) * 10) / 10;
@@ -754,13 +1059,21 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
         if (normRating < finalMin || normRating > finalMax) continue;
 
         const key = r.reviewerName + r.reviewText;
-        if (!uniqueReviews.has(key) && !existingSet.has(key)) {
+        const isNew = !existingSet.has(key);
+        const isNotOlder = !isOlderThan3Months(r.reviewDate);
+        if (isNew && isNotOlder && !uniqueReviews.has(key)) {
           uniqueReviews.add(key);
           allCollectedReviews.push(r);
         }
       }
 
       console.log(`Total Agoda reviews so far: ${allCollectedReviews.length}`);
+
+      // if (hitOlder) {
+      //   console.log(`[Agoda] Encountered review older than 3 months. Stopping scraper.`);
+      //   break;
+      // }
+
       if (allCollectedReviews.length >= limit) break;
 
       // Click Next Page (Numeric Button on Main Page)
@@ -788,7 +1101,7 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
       await new Promise(r => setTimeout(r, 5000));
     }
 
-    console.log(`Agoda Sync Finished. Total: ${allCollectedReviews.length}`);
+    console.log(`Agoda Sync Finished. Total: 	ext{allCollectedReviews.length}`);
     return { success: true, totalReviews: allCollectedReviews.length, reviews: allCollectedReviews.slice(0, limit) };
 
   } catch (err) {
@@ -797,9 +1110,6 @@ exports.openAgodaReviews = async (url, limit = 20, headless = false, existingKey
   }
 };
 
-/**
- * Hotels.com Review Scraper (Open Browser Only for now)
- */
 exports.openHotelsReviews = async (url) => {
   console.log('Launching browser for Hotels.com...');
 
@@ -959,7 +1269,8 @@ exports.openHotelsReviews = async (url) => {
 /**
  * Airbnb Review Scraper (Open Browser Only for now)
  */
-exports.openAirbnbReviews = async (url, limit = 5, headless = true, existingKeys = [], minRating = 1, maxRating = 5) => {
+
+exports.openAirbnbReviews = async (url, limit = 5, headless = true, existingKeys = [], minRating = 1, maxRating = 5) => {
   console.log('Launching browser for Airbnb...');
 
   try {
@@ -996,7 +1307,6 @@ exports.openHotelsReviews = async (url) => {
 
     // CLICK REVIEWS BUTTON
     await page.evaluate(() => {
-
       const elements = Array.from(
         document.querySelectorAll('button, span')
       );
@@ -1023,7 +1333,7 @@ exports.openHotelsReviews = async (url) => {
     const existingSet = new Set(existingKeys || []);
     let finalReviews = [];
 
-    console.log(`Scrolling and extracting to guarantee ${limit} new reviews within ${minRating}-${maxRating} stars...`);
+    console.log(`Scrolling and extracting Airbnb reviews (limit: ${limit}, cutoff: 3 months)...`);
 
     while (scrollAttempts < maxScrollAttempts) {
       // 1. Extract reviews
@@ -1033,17 +1343,14 @@ exports.openHotelsReviews = async (url) => {
           const results = [];
           for (const card of cards) {
             try {
-              // SKIP HOST RESPONSE BLOCKS
               const responseHeading = card.querySelector('h2')?.innerText || '';
               if (responseHeading.toLowerCase().includes('response from')) {
                 continue;
               }
 
-              // REVIEWER NAME
               const reviewerName = card.querySelector('h2[aria-level="2"]')?.innerText?.trim() || '';
               if (!reviewerName) continue;
 
-              // REVIEW DATE
               let reviewDate = '';
               const possibleDates = card.querySelectorAll('div[class*="1h3mmnw"]');
               possibleDates.forEach(el => {
@@ -1053,11 +1360,9 @@ exports.openHotelsReviews = async (url) => {
                 }
               });
 
-              // REVIEW TEXT
               const reviewText = card.querySelector('.ljci3ej')?.innerText?.trim() || '';
               if (!reviewText) continue;
 
-              // RATING
               let rating = null;
               const ratingLabel = card.querySelector('span[aria-hidden="true"]')?.innerText || '';
               if (ratingLabel.toLowerCase().includes('5')) {
@@ -1076,21 +1381,39 @@ exports.openHotelsReviews = async (url) => {
         }
       );
 
-      // 2. Filter against DB keys and rating
+      // Filter against DB keys and rating
       const uniqueReviewsMap = new Map();
       currentReviews.forEach(r => {
         const meetsRating = r.rating >= minRating && r.rating <= maxRating;
         const key = r.reviewerName + r.reviewText;
-        if (meetsRating && !existingSet.has(key) && !uniqueReviewsMap.has(key)) {
+        if (meetsRating && !uniqueReviewsMap.has(key)) {
           uniqueReviewsMap.set(key, r);
         }
       });
-      
-      const newReviews = Array.from(uniqueReviewsMap.values());
-      console.log(`Found ${currentReviews.length} total reviews, ${newReviews.length} match criteria...`);
 
-      if (newReviews.length >= limit) {
-        finalReviews = newReviews.slice(0, limit);
+      const uniqueReviewsList = Array.from(uniqueReviewsMap.values());
+
+      const allOlder = uniqueReviewsList.every(r => isOlderThan3Months(r.reviewDate));
+      if (allOlder && uniqueReviewsList.length > 0) {
+        console.log('[Airbnb] All reviews older than 3 months. Stopping.');
+        break;
+      }
+      const filtered = uniqueReviewsList.filter(r => {
+        const key = r.reviewerName + r.reviewText;
+        const isNotOlder = !isOlderThan3Months(r.reviewDate);
+        return !existingSet.has(key) && isNotOlder;
+      });
+
+      console.log(`Found ${currentReviews.length} total reviews, 	ext{filtered.length} match criteria...`);
+
+      // if (hitOlder) {
+      //   console.log(`[Airbnb] Encountered review older than 3 months. Stopping scraper.`);
+      //   finalReviews = filtered;
+      //   break;
+      // }
+
+      if (filtered.length >= limit) {
+        finalReviews = filtered.slice(0, limit);
         break;
       }
 
@@ -1107,7 +1430,7 @@ exports.openHotelsReviews = async (url) => {
       await new Promise(resolve => setTimeout(resolve, 3000));
       scrollAttempts++;
 
-      finalReviews = newReviews;
+      finalReviews = filtered;
     }
 
     console.log('Airbnb Reviews Extracted (Deduplicated & New):', finalReviews);
@@ -1115,7 +1438,7 @@ exports.openHotelsReviews = async (url) => {
     return {
       success: true,
       totalReviews: finalReviews.length,
-      reviews: finalReviews
+      reviews: finalReviews.slice(0, limit)
     };
 
   } catch (err) {

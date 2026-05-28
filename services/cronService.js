@@ -116,11 +116,8 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
   const scrapers = {
     'Booking.com': openBookingReviews,
     'Google': openGoogleMaps,
-    // 'Expedia': openExpediaReviews,
     'Agoda': openAgodaReviews,
     'Airbnb': openAirbnbReviews,
-    // 'Hotels.com': openHotelsReviews,
-    // 'TripAdvisor': null // Not implemented yet
   };
 
   for (const [platform, url] of Object.entries(platforms)) {
@@ -133,6 +130,9 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
       const limit = prop.max_reviews_per_sync || 5;
       const isHeadless = platform === 'Google' || platform === 'Booking.com';
 
+      console.log(`[Cron][${prop.name}][${platform}] Scraping last 3 months (limit: ${limit})`);
+
+      // Load existing reviews so we can deduplicate them
       const existingDocs = await Review.find({ hotel_id, platform }).select('reviewer_name review_text');
       const existingKeys = existingDocs.map(r => (r.reviewer_name || "") + (r.review_text || ""));
 
@@ -140,15 +140,16 @@ const scrapePropertyPlatforms = async (hotel_id, prop, minRating, maxRating) => 
 
       if (result && result.success && result.reviews) {
         if (result.reviews.length === 0) {
-          console.log(`[Cron][${prop.name}] No new reviews for ${prop.name} on ${platform}`);
-          continue;
+          console.log(`[Cron][${prop.name}][${platform}] Scrape returned 0 reviews within 3 months.`);
+        } else {
+          const stats = await saveUniqueReviews(hotel_id, prop.name, result.reviews, platform, minRating, maxRating);
+          totalNew += stats.newCount;
+          console.log(`[Cron][${prop.name}][${platform}] Sync — ${stats.newCount} fetched, ${stats.duplicateCount} dupes, ${stats.skippedByRating} filtered`);
         }
-        const stats = await saveUniqueReviews(hotel_id, prop.name, result.reviews, platform, minRating, maxRating);
-        totalNew += stats.newCount;
-        console.log(`[Cron][${prop.name}] [${platform}] — ${stats.newCount} fetched, ${stats.duplicateCount} dupes, ${stats.skippedByRating} filtered`);
       } else if (result && !result.success) {
-        console.error(`[Cron][${prop.name}] [${platform}] Scrape failed:`, result.message);
+        console.error(`[Cron][${prop.name}][${platform}] Scrape failed:`, result.message);
       }
+
     } catch (err) {
       console.error(`[Cron][${prop.name}] [${platform}] Error:`, err.message);
     }
