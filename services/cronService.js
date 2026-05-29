@@ -43,11 +43,7 @@ const initCronJobs = async () => {
   clearCrons();
   console.log('[Cron] Initialising dynamic property crons...');
 
-  // AI Worker: Processes exactly 1 batch of up to 5 reviews per minute
-  const aiWorkerTask = cron.schedule('* * * * *', async () => {
-    await runAIWorker();
-  });
-  activeCrons.push(aiWorkerTask);
+  // AI Worker runs separately via Render Cron Job (aiWorker.js)
 
   // Reload properties from DB every 24hrs
   const reloadTask = cron.schedule('0 0 * * *', async () => {
@@ -99,9 +95,6 @@ const processPropertyTier = async (hotel_id, prop, tierName, minRating, maxRatin
     await scrapePropertyPlatforms(hotel_id, prop, minRating, maxRating);
 
     await updatePropertySyncStatus(hotel_id, prop._id, 'success');
-
-    // First analysis runs directly after saving new reviews
-    await runAIWorker();
 
   } catch (err) {
     console.error(`[Cron][${prop.name}] Critical Error in ${tierName} cycle:`, err);
