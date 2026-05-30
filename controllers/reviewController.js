@@ -5,7 +5,7 @@ const Ticket = require("../models/Ticket");
 
 exports.getReviews = async (req, res, next) => {
   try {
-    const { sentiment, department, urgency, status, platform, rating, dateStart, dateEnd, search } = req.query;
+    const { sentiment, department, urgency, status, platform, property, rating, dateStart, dateEnd, search, page, limit, minConfidence, sortBy } = req.query;
     let query = { hotel_id: req.user.hotel_id };
 
     if (sentiment && sentiment !== "ALL") query.sentiment = sentiment;
@@ -24,14 +24,26 @@ exports.getReviews = async (req, res, next) => {
       if (department && department !== "ALL") query.primary_department = department;
     }
     if (urgency && urgency !== "ALL") query.urgency = urgency;
-    if (status && status !== "ALL") query.status = status;
+    if (status && status !== "ALL") {
+      if (status.includes(",")) {
+        query.status = { $in: status.split(",") };
+      } else {
+        query.status = status;
+      }
+    }
     if (platform && platform !== "ALL") query.platform = platform;
+    if (property && property !== "ALL") query.hotel_name = property;
     if (rating && rating !== "ALL") query.rating = parseInt(rating);
+    if (minConfidence) query.confidence = { $gte: parseInt(minConfidence) };
 
     if (dateStart || dateEnd) {
-      query.review_date = {};
-      if (dateStart) query.review_date.$gte = dateStart;
-      if (dateEnd) query.review_date.$lte = dateEnd;
+      query.createdAt = {};
+      if (dateStart) query.createdAt.$gte = new Date(dateStart);
+      if (dateEnd) {
+        const endDate = new Date(dateEnd);
+        endDate.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = endDate;
+      }
     }
 
     if (search) {
@@ -41,13 +53,28 @@ exports.getReviews = async (req, res, next) => {
       ];
     }
 
-    // Fetch Hotel Config for auto-escalation rules
     const hotel = await Hotel.findById(req.user.hotel_id);
     const escalationThreshold = parseInt(hotel?.aiConfig?.escalationRatingThreshold || 1);
 
-    const reviews = await Review.find(query).sort({ imported_at: -1 });
+    // Default sort
+    let sortQuery = { imported_at: -1 };
+    if (sortBy === "OLDEST") sortQuery = { imported_at: 1 };
+    if (sortBy === "RATING_HIGH") sortQuery = { rating: -1 };
+    if (sortBy === "RATING_LOW") sortQuery = { rating: 1 };
+    if (sortBy === "CONFIDENCE_LOW") sortQuery = { confidence: 1 };
 
-    res.json({ success: true, data: { reviews, total: reviews.length } });
+    let reviewsQuery = Review.find(query).sort(sortQuery);
+
+    if (page && limit) {
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      reviewsQuery = reviewsQuery.skip((pageNum - 1) * limitNum).limit(limitNum);
+    }
+
+    const reviews = await reviewsQuery;
+    const total = await Review.countDocuments(query);
+
+    res.json({ success: true, data: { reviews, total } });
   } catch (err) {
     next(err);
   }
