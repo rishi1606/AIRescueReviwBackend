@@ -161,19 +161,29 @@ exports.updateClassification = async (req, res, next) => {
       status = "CLOSED";
     }
 
-    // 3. Calculate Confidence (deterministic backend logic)
-    const confidence = extraction.primary_department && extraction.sentiment ? 95 : 70;
+    // 3. Calculate Confidence — prefer AI's actual confidence, fallback to deterministic logic
+    const confidence = extraction.confidence
+      ? Math.min(100, Math.max(0, Math.round(extraction.confidence)))
+      : (extraction.primary_department && extraction.sentiment ? 85 : 60);
 
     // 4. Validate & Store
+    const needsHumanReview = confidence < (hotel?.aiConfig?.confidenceThreshold || 75);
     const classificationPayload = {
       ...extraction,
       urgency,
       confidence,
       status,
       escalation,
+      escalation_reason: escalation
+        ? `Rating (${review.rating}) is at or below escalation threshold (${escalationThreshold})`
+        : null,
       is_suspicious,
       suspicious_reason,
-      needs_human_review: confidence < (hotel?.aiConfig?.confidenceThreshold || 75),
+      needs_human_review: needsHumanReview,
+      human_review_reason: needsHumanReview
+        ? `AI confidence (${confidence}%) is below the trust threshold (${hotel?.aiConfig?.confidenceThreshold || 75}%)`
+        : null,
+      ai_error: null,
       classified_at: Date.now()
     };
 
@@ -307,7 +317,11 @@ exports.reanalyse = async (req, res, next) => {
         escalation: false,
         escalation_reason: null,
         needs_human_review: null,
-        classified_at: null
+        human_review_reason: null,
+        ai_error: null,
+        classified_at: null,
+        is_processed: false,
+        retry_count: 0
       },
       { new: true }
     );

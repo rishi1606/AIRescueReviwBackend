@@ -253,12 +253,16 @@ const runAIWorker = async () => {
           review.positive_aspects = result.positive_aspects || [];
           review.confidence = result.confidence;
           review.needs_human_review = result.needs_human_review;
+          review.ai_error = null;
 
           review.is_processed = true;
           review.classified_at = Date.now();
 
           // Apply Escalate / Suspicious tags automatically based on rating and settings
           review.escalation = review.rating <= escalationThreshold;
+          review.escalation_reason = review.rating <= escalationThreshold
+            ? `Rating (${review.rating}) is at or below escalation threshold (${escalationThreshold})`
+            : null;
 
           if (review.rating <= 1) {
             review.is_suspicious = true;
@@ -268,6 +272,12 @@ const runAIWorker = async () => {
             review.status = "ESCALATED";
           } else {
             review.status = "Classified";
+          }
+
+          // Determine human review reason based on confidence
+          if (result.needs_human_review || (result.confidence != null && result.confidence < 75)) {
+            review.needs_human_review = true;
+            review.human_review_reason = `AI confidence (${result.confidence || 0}%) is below the trust threshold`;
           }
 
           await review.save();
@@ -283,6 +293,8 @@ const runAIWorker = async () => {
         review.retry_count += 1;
         if (review.retry_count >= 3) {
           review.needs_human_review = true;
+          review.human_review_reason = `AI analysis failed after 3 attempts: ${err.message}`;
+          review.ai_error = err.message || "Unknown AI processing error";
           review.status = "AI Failed";
           review.is_processed = true;
         }
