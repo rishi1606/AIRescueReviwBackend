@@ -14,6 +14,7 @@ const analyticsRoutes = require("./routes/analyticsRoutes");
 const importRoutes = require("./routes/importRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const cronRoutes = require("./routes/cronRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const { initCronJobs } = require("./services/cronService");
 const errorHandler = require("./middleware/errorHandler");
 
@@ -43,6 +44,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/import", importRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/cron", cronRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Error Handler
 app.use(errorHandler);
