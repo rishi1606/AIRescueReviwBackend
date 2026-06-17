@@ -11,15 +11,21 @@ const reviewSchema = new mongoose.Schema({
   normalised_rating: { type: Number },
   review_text: { type: String, required: true },
   review_date: { type: String },
+  review_date_parsed: { type: Date },
   stay_date: { type: String },
   platform: { type: String },
   platform_review_id: { type: String },
   room_number: { type: String },
   guest_email: { type: String },
-  photo_urls: { type: String },
+  photo_urls: [String],
+  country: { type: String },
+  room_type: { type: String },
+  stay_duration: { type: String },
+  stay_date: { type: String },
+  traveler_type: { type: String },
   reviewer_language: { type: String },
   loyalty_tier: { type: String },
-  status: { type: String, default: "Pending AI" },
+  status: { type: String, default: "Pending" },
   is_processed: { type: Boolean, default: false },
   retry_count: { type: Number, default: 0 },
   sentiment: { type: String },
@@ -46,6 +52,8 @@ const reviewSchema = new mongoose.Schema({
   needs_human_review: { type: Boolean },
   human_review_reason: { type: String },
   ai_error: { type: String },
+  keyword_flagged: { type: Boolean, default: false },
+  matched_keywords: [String],
   assignee_id: { type: String },
   assignee_name: { type: String, default: "Unassigned" },
   linked_ticket_id: { type: String },
@@ -68,7 +76,29 @@ const reviewSchema = new mongoose.Schema({
     editor: String,
     timestamp: Number,
     is_approved: Boolean
-  }]
+  }],
+  draft_history: [{
+    version: Number,
+    text: String,
+    tone: String,
+    model: { type: String, default: "llama-3.3-70b-versatile" },
+    generated_by: { type: String, default: "ai" },
+    editor: String,
+    char_count: Number,
+    timestamp: Number
+  }],
+  audit_log: [{
+    action: String,
+    actor: String,
+    details: String,
+    timestamp: Number
+  }],
+  staff_mentions: [String],
+  flag_reason_category: { type: String },
+  flagged_by: { type: String },
+  flagged_at: { type: Number },
+  flag_assigned_to: { type: String },
+  flag_assigned_to_name: { type: String }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Review", reviewSchema);

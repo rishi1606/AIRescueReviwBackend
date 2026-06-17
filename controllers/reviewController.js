@@ -25,7 +25,13 @@ exports.getReviews = async (req, res, next) => {
     }
     if (urgency && urgency !== "ALL") query.urgency = urgency;
     if (status && status !== "ALL") {
-      if (status.includes(",")) {
+      if (status === "Suspicious") {
+        if (!query.$and) query.$and = [];
+        query.$and.push({ $or: [{ is_suspicious: true }, { status: "Suspicious" }] });
+      } else if (status === "ESCALATED") {
+        if (!query.$and) query.$and = [];
+        query.$and.push({ $or: [{ escalation: true }, { status: "ESCALATED" }] });
+      } else if (status.includes(",")) {
         query.status = { $in: status.split(",") };
       } else {
         query.status = status;
@@ -37,20 +43,31 @@ exports.getReviews = async (req, res, next) => {
     if (minConfidence) query.confidence = { $gte: parseInt(minConfidence) };
 
     if (dateStart || dateEnd) {
-      query.createdAt = {};
-      if (dateStart) query.createdAt.$gte = new Date(dateStart);
+      // Use review_date_parsed (actual guest review date) with createdAt fallback
+      const dateCondition = {};
+      if (dateStart) dateCondition.$gte = new Date(dateStart);
       if (dateEnd) {
         const endDate = new Date(dateEnd);
         endDate.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = endDate;
+        dateCondition.$lte = endDate;
       }
+      if (!query.$and) query.$and = [];
+      query.$and.push({
+        $or: [
+          { review_date_parsed: dateCondition },
+          { review_date_parsed: { $exists: false }, createdAt: dateCondition }
+        ]
+      });
     }
 
     if (search) {
-      query.$or = [
-        { reviewer_name: { $regex: search, $options: "i" } },
-        { review_text: { $regex: search, $options: "i" } }
-      ];
+      if (!query.$and) query.$and = [];
+      query.$and.push({
+        $or: [
+          { reviewer_name: { $regex: search, $options: "i" } },
+          { review_text: { $regex: search, $options: "i" } }
+        ]
+      });
     }
 
     const hotel = await Hotel.findById(req.user.hotel_id);
@@ -105,8 +122,46 @@ exports.importReviews = async (req, res, next) => {
           continue;
         }
 
+        // Parse review_date string into a proper Date
+        let review_date_parsed = null;
+        if (r.review_date) {
+          try {
+            const clean = r.review_date
+              .trim()
+              .replace(/^(reviewed|reviewed on|posted on|stayed in)\s*:?\s*/i, '')
+              .replace(/\s+on\s+.*$/i, '')
+              .trim()
+              .toLowerCase();
+            
+            const now = new Date();
+            if (clean === 'today' || clean === 'just now') {
+              review_date_parsed = now;
+            } else if (clean === 'yesterday') {
+              review_date_parsed = new Date(now.getTime() - 86400000);
+            } else {
+              // "a day ago", "an hour ago"
+              const singleMatch = clean.match(/^(a|an)\s+(minute|hour|day|week|month)s?\s+ago$/);
+              if (singleMatch) {
+                const ms = { minute: 60000, hour: 3600000, day: 86400000, week: 604800000, month: 2592000000 };
+                review_date_parsed = new Date(now.getTime() - (ms[singleMatch[2]] || 86400000));
+              } else {
+                // "X hours ago", "X days ago"
+                const relMatch = clean.match(/^(\d+)\s+(minute|hour|day|week|month)s?\s+ago$/);
+                if (relMatch) {
+                  const ms = { minute: 60000, hour: 3600000, day: 86400000, week: 604800000, month: 2592000000 };
+                  review_date_parsed = new Date(now.getTime() - parseInt(relMatch[1]) * (ms[relMatch[2]] || 86400000));
+                } else {
+                  const parsed = new Date(clean);
+                  if (!isNaN(parsed.getTime())) review_date_parsed = parsed;
+                }
+              }
+            }
+          } catch (e) { /* leave null */ }
+        }
+
         const newReview = new Review({
           ...r,
+          review_date_parsed,
           hotel_id: req.user.hotel_id,
           status: "NEW",
           imported_at: Date.now()
@@ -174,9 +229,12 @@ exports.updateClassification = async (req, res, next) => {
       confidence,
       status,
       escalation,
-      escalation_reason: escalation
-        ? `Rating (${review.rating}) is at or below escalation threshold (${escalationThreshold})`
-        : null,
+      escalation_reason: (() => {
+        if (!escalation) return null;
+        const displayRating = review.raw_rating != null ? `${review.raw_rating}/${review.raw_rating_scale}` : `${review.rating}/5`;
+        const normalizedDisplay = review.raw_rating != null ? ` (normalized: ${review.rating}/5)` : '';
+        return `Rating ${displayRating}${normalizedDisplay} is at or below escalation threshold (${escalationThreshold}/5)`;
+      })(),
       is_suspicious,
       suspicious_reason,
       needs_human_review: needsHumanReview,
@@ -220,7 +278,23 @@ exports.approveResponse = async (req, res, next) => {
         response_tone,
         submitted_by: is_submission ? approved_by : undefined,
         approved_by: is_submission ? undefined : approved_by,
-        approved_at: Date.now()
+        approved_at: Date.now(),
+        $push: {
+          audit_log: {
+            action: is_submission ? "submitted_for_approval" : "approved",
+            actor: approved_by || req.user.name || req.user.email,
+            details: is_submission ? `Submitted for approval with ${response_tone} tone` : `Approved and published with ${response_tone} tone`,
+            timestamp: Date.now()
+          },
+          response_history: {
+            version: 1,
+            text: response_text,
+            tone: response_tone,
+            editor: approved_by || req.user.name,
+            timestamp: Date.now(),
+            is_approved: !is_submission
+          }
+        }
       },
       { new: true }
     );
@@ -251,13 +325,55 @@ exports.rejectResponse = async (req, res, next) => {
   }
 };
 
+exports.reopenReview = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const review = await Review.findOneAndUpdate(
+      { review_id, hotel_id: req.user.hotel_id, status: "RESPONDED" },
+      {
+        status: "IN REVIEW",
+        $push: {
+          audit_log: {
+            action: "reopened",
+            actor: req.user.name || req.user.email,
+            details: "Response unapproved — review reopened for new response",
+            timestamp: Date.now()
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ success: false, message: "Review not found or not in RESPONDED state" });
+    res.json({ success: true, data: review });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.flagSuspicious = async (req, res, next) => {
   try {
     const { review_id } = req.params;
-    const { suspicious_reason } = req.body;
+    const { suspicious_reason, flag_reason_category, flag_assigned_to, flag_assigned_to_name } = req.body;
     const review = await Review.findOneAndUpdate(
       { review_id, hotel_id: req.user.hotel_id },
-      { is_suspicious: true, status: "Suspicious", suspicious_reason },
+      {
+        is_suspicious: true,
+        status: "Suspicious",
+        suspicious_reason,
+        flag_reason_category: flag_reason_category || "Other",
+        flagged_by: req.user.name || req.user.email,
+        flagged_at: Date.now(),
+        flag_assigned_to: flag_assigned_to || null,
+        flag_assigned_to_name: flag_assigned_to_name || null,
+        $push: {
+          audit_log: {
+            action: "flagged",
+            actor: req.user.name || req.user.email,
+            details: `Flagged as ${flag_reason_category || "Other"}: ${suspicious_reason}`,
+            timestamp: Date.now()
+          }
+        }
+      },
       { new: true }
     );
 
@@ -266,6 +382,46 @@ exports.flagSuspicious = async (req, res, next) => {
       await Ticket.findOneAndUpdate(
         { ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id },
         { is_flagged: true, flag_reason: suspicious_reason }
+      );
+    }
+
+    res.json({ success: true, data: review });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.removeSuspiciousFlag = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const review = await Review.findOneAndUpdate(
+      { review_id, hotel_id: req.user.hotel_id },
+      {
+        is_suspicious: false,
+        status: "Classified",
+        suspicious_reason: null,
+        flag_reason_category: null,
+        flagged_by: null,
+        flagged_at: null,
+        flag_assigned_to: null,
+        flag_assigned_to_name: null,
+        $push: {
+          audit_log: {
+            action: "deflagged",
+            actor: req.user.name || req.user.email,
+            details: "Flag removed — review returned to Classified status",
+            timestamp: Date.now()
+          }
+        }
+      },
+      { new: true }
+    );
+
+    // Sync to Ticket
+    if (review && review.linked_ticket_id) {
+      await Ticket.findOneAndUpdate(
+        { ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id },
+        { is_flagged: false, flag_reason: null }
       );
     }
 
@@ -453,6 +609,162 @@ exports.deleteAllReviews = async (req, res, next) => {
     await Review.deleteMany({ hotel_id: req.user.hotel_id });
     await Ticket.deleteMany({ hotel_id: req.user.hotel_id });
     res.json({ success: true, message: "All reviews and tickets deleted" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ═══════════════════════════════════════════
+// NEW ENDPOINTS — Review Detail Page
+// ═══════════════════════════════════════════
+
+exports.getReviewById = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const review = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    if (!review) return res.status(404).json({ success: false, message: "Review not found" });
+
+    // Fetch linked ticket if exists
+    let ticket = null;
+    if (review.linked_ticket_id) {
+      ticket = await Ticket.findOne({ ticket_id: review.linked_ticket_id, hotel_id: req.user.hotel_id });
+    }
+
+    res.json({ success: true, data: { review, ticket } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.saveDraft = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const { text, tone, model, generated_by, editor } = req.body;
+
+    const review = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    if (!review) return res.status(404).json({ success: false, message: "Review not found" });
+
+    const currentVersion = (review.draft_history || []).length + 1;
+
+    review.draft_history.push({
+      version: currentVersion,
+      text,
+      tone,
+      model: model || "llama-3.3-70b-versatile",
+      generated_by: generated_by || "ai",
+      editor: editor || req.user.name || req.user.email,
+      char_count: text.length,
+      timestamp: Date.now()
+    });
+
+    review.audit_log.push({
+      action: "draft_generated",
+      actor: editor || req.user.name || req.user.email,
+      details: `Draft v${currentVersion} generated (${tone} tone, ${generated_by || "ai"})`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+    res.json({ success: true, data: review });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getReviewerProfile = async (req, res, next) => {
+  try {
+    const { reviewer_name } = req.params;
+    const reviews = await Review.find({
+      hotel_id: req.user.hotel_id,
+      reviewer_name: { $regex: new RegExp(`^${reviewer_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+    }).sort({ imported_at: -1 }).select('review_id rating sentiment platform hotel_name review_text review_date imported_at status');
+
+    if (reviews.length === 0) {
+      return res.json({ success: true, data: { reviewer_name, total_reviews: 0, reviews: [] } });
+    }
+
+    const totalReviews = reviews.length;
+    const avgRating = Math.round((reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews) * 10) / 10;
+    const platforms = [...new Set(reviews.map(r => r.platform).filter(Boolean))];
+    const properties = [...new Set(reviews.map(r => r.hotel_name).filter(Boolean))];
+    const firstReview = reviews[reviews.length - 1];
+    const latestReview = reviews[0];
+
+    res.json({
+      success: true,
+      data: {
+        reviewer_name,
+        total_reviews: totalReviews,
+        avg_rating: avgRating,
+        platforms,
+        properties,
+        first_review_date: firstReview?.imported_at || firstReview?.review_date,
+        latest_review_date: latestReview?.imported_at || latestReview?.review_date,
+        reviews
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getSimilarReviews = async (req, res, next) => {
+  try {
+    const { review_id } = req.params;
+    const review = await Review.findOne({ review_id, hotel_id: req.user.hotel_id });
+    if (!review) return res.status(404).json({ success: false, message: "Review not found" });
+
+    // Find reviews with same department + similar sentiment, excluding self
+    const query = {
+      hotel_id: req.user.hotel_id,
+      review_id: { $ne: review_id },
+      is_processed: true
+    };
+
+    // Primary match: same department
+    if (review.primary_department) {
+      query.primary_department = review.primary_department;
+    }
+
+    const similar = await Review.find(query)
+      .sort({ imported_at: -1 })
+      .limit(5)
+      .select('review_id reviewer_name rating sentiment platform hotel_name review_text primary_department urgency imported_at issues');
+
+    // Count total reviews in this department in last 30 days
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const deptTrend = review.primary_department ? await Review.countDocuments({
+      hotel_id: req.user.hotel_id,
+      primary_department: review.primary_department,
+      sentiment: { $in: ["Negative", "Mixed"] },
+      imported_at: { $gte: thirtyDaysAgo }
+    }) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        similar,
+        trend: {
+          department: review.primary_department,
+          negative_count_30d: deptTrend,
+          message: deptTrend > 0 ? `${review.primary_department} has ${deptTrend} negative/mixed reviews in the last 30 days` : null
+        }
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ─── Pending Status (for TopBar badge + auto-poll) ────────────────────────────
+exports.getPendingStatus = async (req, res, next) => {
+  try {
+    const hotel_id = req.user.hotel_id;
+    const [pendingCount, totalCount] = await Promise.all([
+      Review.countDocuments({ hotel_id, is_processed: { $ne: true } }),
+      Review.countDocuments({ hotel_id })
+    ]);
+    res.json({ success: true, data: { pendingCount, totalCount } });
   } catch (err) {
     next(err);
   }

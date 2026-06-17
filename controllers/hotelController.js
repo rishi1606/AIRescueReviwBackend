@@ -57,7 +57,9 @@ exports.updateHotel = async (req, res, next) => {
       slaConfig,
       deptSlaConfig,
       aiConfig,
-      properties
+      properties,
+      keywordAlerts,
+      responseTemplates
     } = req.body;
 
     // Validation
@@ -97,6 +99,8 @@ exports.updateHotel = async (req, res, next) => {
     if (deptSlaConfig !== undefined) hotel.deptSlaConfig = deptSlaConfig;
     if (aiConfig !== undefined) hotel.aiConfig = aiConfig;
     if (properties !== undefined) hotel.properties = properties;
+    if (keywordAlerts !== undefined) hotel.keywordAlerts = keywordAlerts;
+    if (responseTemplates !== undefined) hotel.responseTemplates = responseTemplates;
 
     await hotel.save();
 

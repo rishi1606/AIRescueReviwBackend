@@ -41,6 +41,17 @@ const hotelSchema = new mongoose.Schema({
     escalationRatingThreshold: { type: Number, default: 2 } // Auto-escalate if rating <= 2
   },
 
+  keywordAlerts: {
+    type: [String],
+    default: []
+  },
+
+  responseTemplates: [{
+    name: { type: String, required: true },
+    content: { type: String, required: true },
+    category: { type: String, default: "General" }
+  }],
+
   properties: [{
     name: { type: String, required: true },
     city: { type: String, required: true },
@@ -52,7 +63,9 @@ const hotelSchema = new mongoose.Schema({
     low_sync_interval: { type: String, default: "10hr" },
     last_sync_status: { type: String, default: "never" },
     last_sync_time: { type: Date },
-    max_reviews_per_sync: { type: Number, default: 5 }
+    max_reviews_per_sync: { type: Number, default: 5 },
+    image: { type: String, default: "" },
+    description: { type: String, default: "" }
   }],
 
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" }

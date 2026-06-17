@@ -168,7 +168,8 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
       continue;
     }
 
-    const uniqueString = `${platform}_${raw.reviewerName}_${raw.reviewText}`;
+    const normText = raw.reviewText.trim().replace(/\s+/g, ' ').toLowerCase().substring(0, 100);
+    const uniqueString = `${platform}_${raw.reviewerName?.trim().toLowerCase()}_${normText}`;
     const review_id = crypto.createHash('md5').update(uniqueString).digest('hex');
 
     const rawRating = raw.rating;
@@ -208,7 +209,13 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
         review_text: raw.reviewText,
         review_date: raw.reviewDate,
         platform: platform,
-        status: "Pending AI",
+        photo_urls: raw.photoUrls || [],
+        country: raw.country || '',
+        room_type: raw.roomType || '',
+        stay_duration: raw.stayDuration || '',
+        stay_date: raw.stayDate || '',
+        traveler_type: raw.travelerType || '',
+        status: "Pending",
         is_processed: false,
         retry_count: 0,
         imported_at: Date.now()
@@ -247,12 +254,17 @@ const runAIWorker = async () => {
           if (!review) continue;
 
           review.sentiment = result.sentiment;
+          review.sentiment_reason = result.sentiment_reason || null;
           review.primary_department = result.primary_department;
           review.urgency = result.urgency;
+          review.urgency_reason = result.urgency_reason || null;
+          review.guest_emotion = result.guest_emotion || null;
           review.issues = result.issues || [];
           review.positive_aspects = result.positive_aspects || [];
           review.confidence = result.confidence;
           review.needs_human_review = result.needs_human_review;
+          review.staff_mentions = result.staff_mentions || [];
+          review.escalation_risk = result.escalation_risk || false;
           review.ai_error = null;
 
           review.is_processed = true;
@@ -260,13 +272,22 @@ const runAIWorker = async () => {
 
           // Apply Escalate / Suspicious tags automatically based on rating and settings
           review.escalation = review.rating <= escalationThreshold;
+          const displayRating = review.raw_rating != null ? `${review.raw_rating}/${review.raw_rating_scale}` : `${review.rating}/5`;
+          const normalizedDisplay = review.raw_rating != null ? ` (normalized: ${review.rating}/5)` : '';
           review.escalation_reason = review.rating <= escalationThreshold
-            ? `Rating (${review.rating}) is at or below escalation threshold (${escalationThreshold})`
+            ? `Rating ${displayRating}${normalizedDisplay} is at or below escalation threshold (${escalationThreshold}/5)`
             : null;
 
-          if (review.rating <= 1) {
+          // Only AI-detected suspicious should mark as Suspicious (fake/spam/contradiction)
+          // Safeguard: 4-5★ reviews with Positive/Neutral sentiment are NEVER suspicious
+          // (the small AI model sometimes falsely flags short positive reviews)
+          const aiSaysSuspicious = result.is_suspicious && !(
+            review.rating >= 4 && ['Positive', 'Neutral'].includes(result.sentiment)
+          );
+
+          if (aiSaysSuspicious) {
             review.is_suspicious = true;
-            review.suspicious_reason = "Auto-flagged: Rating is 1 star or below.";
+            review.suspicious_reason = "Flagged: review text contradicts the star rating or appears suspicious.";
             review.status = "Suspicious";
           } else if (review.rating <= escalationThreshold) {
             review.status = "ESCALATED";
@@ -274,11 +295,44 @@ const runAIWorker = async () => {
             review.status = "Classified";
           }
 
-          // Determine human review reason based on confidence
-          if (result.needs_human_review || (result.confidence != null && result.confidence < 75)) {
-            review.needs_human_review = true;
-            review.human_review_reason = `AI confidence (${result.confidence || 0}%) is below the trust threshold`;
+          // Keyword Alert auto-flagging
+          const keywordAlerts = hotel?.keywordAlerts || [];
+          if (keywordAlerts.length > 0) {
+            const reviewText = (review.review_text || "").toLowerCase();
+            const matchedKeywords = keywordAlerts.filter(kw => reviewText.includes(kw.toLowerCase()));
+            if (matchedKeywords.length > 0) {
+              review.keyword_flagged = true;
+              review.matched_keywords = matchedKeywords;
+              if (!review.is_suspicious) {
+                review.is_suspicious = true;
+                review.suspicious_reason = `Keyword alert: review contains flagged keyword(s): ${matchedKeywords.join(", ")}`;
+              }
+              if (review.status === "Classified") {
+                review.status = "ESCALATED";
+                review.escalation = true;
+                review.escalation_reason = (review.escalation_reason ? review.escalation_reason + " | " : "") + `Keyword alert: "${matchedKeywords.join('", "')}"`;
+              }
+            }
           }
+
+          // Determine human review reason based on confidence
+          const confidenceThreshold = parseInt(hotel?.aiConfig?.confidenceThreshold || 75);
+          const belowThreshold = result.confidence != null && result.confidence < confidenceThreshold;
+          if (belowThreshold) {
+            review.needs_human_review = true;
+            review.human_review_reason = `Analysis confidence (${result.confidence}%) is below the trust threshold (${confidenceThreshold}%)`;
+          } else {
+            review.needs_human_review = false;
+            review.human_review_reason = null;
+          }
+          // Push audit log entry
+          if (!review.audit_log) review.audit_log = [];
+          review.audit_log.push({
+            action: "classified",
+            actor: "System",
+            details: `Classified as ${result.sentiment} (${result.confidence}% confidence) — ${review.primary_department}, ${review.urgency} urgency`,
+            timestamp: Date.now()
+          });
 
           await review.save();
           processedCount++;
@@ -293,9 +347,9 @@ const runAIWorker = async () => {
         review.retry_count += 1;
         if (review.retry_count >= 3) {
           review.needs_human_review = true;
-          review.human_review_reason = `AI analysis failed after 3 attempts: ${err.message}`;
-          review.ai_error = err.message || "Unknown AI processing error";
-          review.status = "AI Failed";
+          review.human_review_reason = `Analysis failed after 3 attempts: ${err.message}`;
+          review.ai_error = err.message || "Unknown processing error";
+          review.status = "Failed";
           review.is_processed = true;
         }
         await review.save();

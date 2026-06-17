@@ -63,7 +63,7 @@ exports.runCsvAnalysis = async (filePath, batchId, hotelId) => {
               rating: parseInt(row.rating),
               review_text: row.review_text,
               platform: row.platform || "Import",
-              status: "Pending AI",
+              status: "Pending",
               is_manual: false
             });
 

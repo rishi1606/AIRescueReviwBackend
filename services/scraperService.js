@@ -7,8 +7,10 @@ function removeDuplicateReviews(reviews) {
   const seen = new Set();
 
   return reviews.filter(review => {
-    // Unique key using review text + reviewer
-    const uniqueKey = `${review.reviewerName}_${review.reviewText}`;
+    // Unique key using normalized reviewer name + first 100 chars of text
+    const normName = (review.reviewerName || '').trim().toLowerCase();
+    const normText = (review.reviewText || '').trim().replace(/\s+/g, ' ').toLowerCase().substring(0, 100);
+    const uniqueKey = `${normName}_${normText}`;
 
     if (seen.has(uniqueKey)) {
       return false;
@@ -282,6 +284,17 @@ exports.openGoogleMaps = async (
         } catch (e) { }
       }
 
+      // Scroll each review card into view to trigger lazy loading of photos
+      const cardHandles = await page.$$(".Svr5cf.bKhjM");
+      for (const card of cardHandles) {
+        try {
+          await card.evaluate(el => el.scrollIntoView({ block: 'center' }));
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) { }
+      }
+      // Wait for all images to finish loading
+      await new Promise(r => setTimeout(r, 1500));
+
       // Extract reviews
       const currentReviews = await page.$$eval(".Svr5cf.bKhjM", cards => {
         return cards.map(card => {
@@ -309,8 +322,25 @@ exports.openGoogleMaps = async (
           // Stay type
           const stayType = card.querySelector(".ThUm5b span")?.innerText?.trim() || "";
 
-          return { reviewerName, rating, reviewDate, stayType, reviewText };
+          // Extract review photos — they're inside the card with 'grass-cs' in URL
+          const cardImgs = card.querySelectorAll('img');
+          const photoUrls = Array.from(cardImgs)
+            .map(img => img.src || '')
+            .filter(src =>
+              src.includes('googleusercontent.com') &&
+              !src.includes('/a-/') &&     // skip avatar
+              !src.includes('/a/') &&      // skip avatar variant
+              !src.includes('gstatic') &&  // skip Google logos
+              !src.includes('branding')    // skip branding imgs
+            );
+
+          return { reviewerName, rating, reviewDate, stayType, reviewText, photoUrls };
         });
+      });
+
+      // Debug log
+      currentReviews.forEach(r => {
+        console.log(`  [${r.reviewerName}] photos: ${r.photoUrls?.length || 0}`, r.photoUrls);
       });
 
       const deduplicated = removeDuplicateReviews(currentReviews);
@@ -610,6 +640,26 @@ exports.openBookingReviews = async (
                 .filter(Boolean)
                 .join(' ');
 
+              // Extract review photos — THUMBNAILS may be inside the card OR in a sibling/parent wrapper
+              let photoEls = card.querySelectorAll('[data-testid="THUMBNAILS"] img');
+              if (!photoEls.length) {
+                // Try parent container (Booking wraps review + photos in a parent div)
+                const parent = card.closest('[data-testid="review-card-wrapper"]') || card.parentElement;
+                if (parent) {
+                  photoEls = parent.querySelectorAll('[data-testid="THUMBNAILS"] img');
+                }
+              }
+              if (!photoEls.length) {
+                // Try next sibling element
+                const next = card.nextElementSibling;
+                if (next && next.querySelector('[data-testid="THUMBNAILS"]')) {
+                  photoEls = next.querySelectorAll('img');
+                }
+              }
+              const photoUrls = Array.from(photoEls)
+                .map(img => img.src || img.getAttribute('src') || img.dataset?.src || '')
+                .filter(src => src && src.startsWith('http'));
+
               if (!reviewerName || !reviewText) {
                 continue;
               }
@@ -626,7 +676,8 @@ exports.openBookingReviews = async (
                 reviewerName,
                 rating,
                 reviewDate,
-                reviewText
+                reviewText,
+                photoUrls
               });
 
             } catch (err) { }
@@ -637,6 +688,9 @@ exports.openBookingReviews = async (
       );
 
       console.log(`Reviews found: ${currentReviews.length}`);
+      currentReviews.forEach(r => {
+        console.log(`  [${r.reviewerName}] photos: ${r.photoUrls?.length || 0}`, r.photoUrls);
+      });
 
       if (!currentReviews.length) {
         console.log('No reviews on page');

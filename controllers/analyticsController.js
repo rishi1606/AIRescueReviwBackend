@@ -53,7 +53,7 @@ exports.getSummary = async (req, res, next) => {
       ? (reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1) 
       : "0.0";
 
-    const pendingAI = reviews.filter(r => r.status === "Pending AI").length;
+    const pendingAI = reviews.filter(r => r.status === "Pending AI" || r.status === "Pending").length;
     const criticalCount = tickets.filter(t => t.urgency === "High" && t.status === "Open").length;
     const approvedCount = reviews.filter(r => r.status === "Approved").length;
     const resolvedTickets = tickets.filter(t => t.status === "Closed" || t.status === "Resolved").length;
