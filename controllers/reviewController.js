@@ -54,7 +54,8 @@ exports.getReviews = async (req, res, next) => {
       if (!query.$and) query.$and = [];
       query.$and.push({
         $or: [
-          { review_date_parsed: dateCondition },
+          { review_date_parsed: { $ne: null, ...dateCondition } },
+          { review_date_parsed: null, createdAt: dateCondition },
           { review_date_parsed: { $exists: false }, createdAt: dateCondition }
         ]
       });

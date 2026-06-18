@@ -197,6 +197,41 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
 
     const exists = await Review.findOne({ review_id });
     if (!exists) {
+      // Parse review_date string into a proper Date for accurate date filtering
+      let review_date_parsed = null;
+      if (raw.reviewDate) {
+        try {
+          const clean = raw.reviewDate
+            .trim()
+            .replace(/^(reviewed|reviewed on|posted on|stayed in)\s*:?\s*/i, '')
+            .replace(/\s+on\s+.*$/i, '')
+            .trim()
+            .toLowerCase();
+
+          const now = new Date();
+          if (clean === 'today' || clean === 'just now') {
+            review_date_parsed = now;
+          } else if (clean === 'yesterday') {
+            review_date_parsed = new Date(now.getTime() - 86400000);
+          } else {
+            const singleMatch = clean.match(/^(a|an)\s+(minute|hour|day|week|month)s?\s+ago$/);
+            if (singleMatch) {
+              const ms = { minute: 60000, hour: 3600000, day: 86400000, week: 604800000, month: 2592000000 };
+              review_date_parsed = new Date(now.getTime() - (ms[singleMatch[2]] || 86400000));
+            } else {
+              const relMatch = clean.match(/^(\d+)\s+(minute|hour|day|week|month)s?\s+ago$/);
+              if (relMatch) {
+                const ms = { minute: 60000, hour: 3600000, day: 86400000, week: 604800000, month: 2592000000 };
+                review_date_parsed = new Date(now.getTime() - parseInt(relMatch[1]) * (ms[relMatch[2]] || 86400000));
+              } else {
+                const parsed = new Date(clean);
+                if (!isNaN(parsed.getTime())) review_date_parsed = parsed;
+              }
+            }
+          }
+        } catch (e) { /* leave null */ }
+      }
+
       await Review.create({
         review_id,
         hotel_id: hotel_id,
@@ -208,6 +243,7 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
         normalised_rating: normalisedRating,
         review_text: raw.reviewText,
         review_date: raw.reviewDate,
+        review_date_parsed,
         platform: platform,
         photo_urls: raw.photoUrls || [],
         country: raw.country || '',
