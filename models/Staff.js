@@ -21,7 +21,7 @@ const staffSchema = new mongoose.Schema({
       "Facilities", "Cleanliness", "Noise Control", "Accessibility",
       "Check-in Experience", "Check-out Experience"
     ],
-    required: true
+    default: "Management"
   },
   hotelId: { type: mongoose.Schema.Types.ObjectId, ref: "Hotel" },
   avatar_initials: { type: String },

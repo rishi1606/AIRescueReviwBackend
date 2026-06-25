@@ -56,24 +56,30 @@ const initCronJobs = async () => {
   });
   activeCrons.push(reloadTask);
 
-  const hotel = await Hotel.findOne();
-  if (!hotel || !hotel.properties || hotel.properties.length === 0) {
-    console.log('[Cron] No properties found. Cron inactive.');
+  const hotels = await Hotel.find({ is_active: { $ne: false } }).lean();
+  if (!hotels || hotels.length === 0) {
+    console.log('[Cron] No active hotels found. Cron inactive.');
     return;
   }
 
-  const activeProps = hotel.properties.filter(p => p.is_active);
-  console.log(`[Cron] Found ${activeProps.length} active properties.`);
+  let globalStagger = 0;
+  for (const hotel of hotels) {
+    if (!hotel.properties || hotel.properties.length === 0) continue;
 
-  activeProps.forEach((prop, stagger_index) => {
-    // Unified review sync (1-5★): dynamic per-property interval, 15 min gap
-    const syncPattern = getCronPattern(prop.urgent_sync_interval || '5hr', stagger_index * 15);
-    console.log(`[Cron][${prop.name}] Scheduling unified sync cycle with interval ${prop.urgent_sync_interval || '5hr'} -> Pattern: ${syncPattern} (IST)`);
-    const syncTask = cron.schedule(syncPattern, async () => {
-      await processPropertyTier(hotel._id, prop, 'ALL', 1, 5);
-    }, { timezone: "Asia/Kolkata" });
-    activeCrons.push(syncTask);
-  });
+    const activeProps = hotel.properties.filter(p => p.is_active);
+    console.log(`[Cron][${hotel.hotel_name}] Found ${activeProps.length} active properties.`);
+
+    activeProps.forEach((prop) => {
+      // Unified review sync (1-5★): dynamic per-property interval, 15 min gap
+      const syncPattern = getCronPattern(prop.urgent_sync_interval || '5hr', globalStagger * 15);
+      console.log(`[Cron][${hotel.hotel_name}][${prop.name}] Scheduling unified sync cycle with interval ${prop.urgent_sync_interval || '5hr'} -> Pattern: ${syncPattern} (IST)`);
+      const syncTask = cron.schedule(syncPattern, async () => {
+        await processPropertyTier(hotel._id, prop, 'ALL', 1, 5);
+      }, { timezone: "Asia/Kolkata" });
+      activeCrons.push(syncTask);
+      globalStagger++;
+    });
+  }
 };
 
 const updatePropertySyncStatus = async (hotel_id, prop_id, status) => {
@@ -264,6 +270,57 @@ const saveUniqueReviews = async (hotel_id, hotel_name, reviews, platform, minRat
   return { newCount, duplicateCount, skippedByRating };
 };
 
+// Create ticket from review and auto-assign to staff
+const createAndAssignTicket = async (review, hotel, escalationThreshold) => {
+  try {
+    // Check if ticket already exists for this review
+    const existingTicket = await Ticket.findOne({
+      hotel_id: review.hotel_id,
+      review_id: review.review_id
+    });
+
+    if (existingTicket) {
+      return; // Ticket already exists
+    }
+
+    // Determine if ticket requires response (only if requires_response is true)
+    if (!review.requires_response) {
+      return;
+    }
+
+    // Create new ticket
+    const ticketId = `TKT-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
+    const ticket = new Ticket({
+      ticket_id: ticketId,
+      hotel_id: review.hotel_id,
+      review_id: review.review_id,
+      guest_name: review.reviewer_name,
+      guest_email: review.guest_email,
+      room_number: review.room_number,
+      rating: review.rating,
+      platform: review.platform,
+      review_text: review.review_text,
+      department: review.primary_department,
+      primary_department: review.primary_department,
+      property_name: review.property_name || review.hotel_name,
+      issues: review.issues || [],
+      suggested_action: review.suggested_action,
+      guest_emotion: review.guest_emotion,
+      escalation_risk: review.escalation_risk || false,
+      urgency: review.urgency,
+      status: "Unassigned",
+      created_at: Date.now(),
+      escalation: review.rating <= escalationThreshold
+    });
+
+    await ticket.save();
+    console.log(`[Ticket Service] Created ticket ${ticketId}`);
+  } catch (err) {
+    console.error('[Ticket Service] Error creating/assigning ticket:', err.message);
+    throw err;
+  }
+};
+
 const runAIWorker = async () => {
   try {
     const batch = await Review.find({
@@ -371,6 +428,14 @@ const runAIWorker = async () => {
           });
 
           await review.save();
+
+          // Auto-create ticket and assign to staff
+          try {
+            await createAndAssignTicket(review, hotel, escalationThreshold);
+          } catch (ticketErr) {
+            console.error(`[AI Worker] Failed to create ticket for review ${review._id}:`, ticketErr.message);
+          }
+
           processedCount++;
         }
         console.log(`[AI Worker] Success: ${processedCount} reviews classified.`);

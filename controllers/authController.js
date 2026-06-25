@@ -79,6 +79,11 @@ exports.login = async (req, res, next) => {
     const isMatch = await bcrypt.compare(password, staff.password);
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
+    // Block login if business is deactivated (superadmins are exempt)
+    if (staff.role !== "superadmin" && staff.hotelId && staff.hotelId.is_active === false) {
+      return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
+    }
+
     // Ensure staff has a valid hotel
     if (!staff.hotelId) {
       let hotel = await Hotel.findOne();

@@ -6,6 +6,7 @@ const reviewSchema = new mongoose.Schema({
   hotel_name: { type: String },
   reviewer_name: { type: String, required: true },
   rating: { type: Number, required: true },
+  is_active: { type: Boolean, default: true },
   raw_rating: { type: Number },
   raw_rating_scale: { type: Number },
   normalised_rating: { type: Number },
@@ -101,4 +102,22 @@ const reviewSchema = new mongoose.Schema({
   flag_assigned_to_name: { type: String }
 }, { timestamps: true });
 
+// Exclude inactive reviews from queries automatically
+reviewSchema.pre(/^find/, function() {
+  if (this.getOptions().includeInactive !== true) {
+    this.where({ is_active: { $ne: false } });
+  }
+});
+
+reviewSchema.pre('countDocuments', function() {
+  if (this.getOptions().includeInactive !== true) {
+    this.where({ is_active: { $ne: false } });
+  }
+});
+
+reviewSchema.pre('aggregate', function() {
+  this.pipeline().unshift({ $match: { is_active: { $ne: false } } });
+});
+
 module.exports = mongoose.model("Review", reviewSchema);
+

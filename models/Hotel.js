@@ -18,7 +18,7 @@ const hotelSchema = new mongoose.Schema({
     type: [String],
     default: ["Google", "Agoda", "Booking.com", "Airbnb"]
   },
-  contact_email: { type: String }, // For escalations
+  is_active: { type: Boolean, default: true },
 
   // SLA & AI Settings
   slaConfig: {

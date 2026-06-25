@@ -1,113 +1,194 @@
 const Notification = require('../models/Notification');
+const notificationService = require('../services/notificationService');
 
-// GET /notifications — fetch latest 50 notifications
-const getNotifications = async (req, res) => {
+// POST /notifications — create a notification
+exports.createNotification = async (req, res, next) => {
   try {
-    const notifications = await Notification.find()
-      .sort({ created_at: -1 })
-      .limit(50)
-      .lean();
+    const { type, message, title, priority, link_to, relatedTicketId, relatedReviewId } = req.body;
+    const recipientId = req.user.id;
+    const hotelId = req.user.hotel_id;
 
-    // Map read status for the current user
-    const userId = req.user?._id?.toString() || req.user?.id || 'unknown';
-    const mapped = notifications.map(n => ({
-      _id: n._id,
-      type: n.type,
-      title: n.title,
-      message: n.message,
-      link_to: n.link_to,
-      review_id: n.review_id,
-      actor: n.actor,
-      read: (n.read_by || []).includes(userId),
-      created_at: n.created_at,
-      timestamp: new Date(n.created_at).getTime()
-    }));
+    if (!type || !message) {
+      return res.status(400).json({ success: false, message: "type and message are required" });
+    }
 
-    res.json(mapped);
-  } catch (err) {
-    console.error('[Notifications] Fetch error:', err);
-    res.status(500).json({ error: 'Failed to fetch notifications' });
-  }
-};
-
-// POST /notifications — create a new notification
-const createNotification = async (req, res) => {
-  try {
-    const { type, title, message, link_to, review_id, actor } = req.body;
-
-    const notification = await Notification.create({
-      type: type || 'info',
-      title: title || '',
+    const notification = new Notification({
+      recipientId,
+      hotelId,
+      type,
       message,
-      link_to: link_to || null,
-      review_id: review_id || null,
-      actor: actor || req.user?.name || 'System',
-      created_at: new Date()
+      title: title || message,
+      priority: priority || 'medium',
+      link_to,
+      relatedTicketId,
+      relatedReviewId
     });
+
+    await notification.save();
 
     res.status(201).json({
-      _id: notification._id,
-      type: notification.type,
-      title: notification.title,
-      message: notification.message,
-      link_to: notification.link_to,
-      review_id: notification.review_id,
-      actor: notification.actor,
-      read: false,
-      created_at: notification.created_at,
-      timestamp: new Date(notification.created_at).getTime()
+      success: true,
+      data: notification
     });
   } catch (err) {
-    console.error('[Notifications] Create error:', err);
-    res.status(500).json({ error: 'Failed to create notification' });
+    next(err);
   }
 };
 
-// PUT /notifications/:id/read — mark a single notification as read for current user
-const markAsRead = async (req, res) => {
+// GET /notifications — fetch notifications for current user (staff)
+exports.getNotifications = async (req, res, next) => {
   try {
-    const userId = req.user?._id?.toString() || req.user?.id || 'unknown';
-    await Notification.updateOne(
-      { _id: req.params.id },
-      { $addToSet: { read_by: userId } }
-    );
-    res.json({ success: true });
+    const staffId = req.user.id;
+    const hotelId = req.user.hotel_id;
+    const { limit = 20, skip = 0, type, isRead } = req.query;
+
+    let query = {
+      recipientId: staffId,
+      hotelId: hotelId
+    };
+
+    if (type) query.type = type;
+    if (isRead !== undefined) query.isRead = isRead === 'true';
+
+    const notifications = await Notification.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .populate("relatedTicketId", "ticket_id guest_name rating")
+      .populate("relatedReviewId", "review_text rating")
+      .exec();
+
+    const total = await Notification.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: notifications,
+      pagination: {
+        total: total,
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: parseInt(skip) + parseInt(limit) < total
+      }
+    });
   } catch (err) {
-    console.error('[Notifications] Mark read error:', err);
-    res.status(500).json({ error: 'Failed to mark as read' });
+    next(err);
   }
 };
 
-// PUT /notifications/read-all — mark all notifications as read for current user
-const markAllAsRead = async (req, res) => {
+// GET /notifications/unread — get unread count for current user
+exports.getUnreadCount = async (req, res, next) => {
   try {
-    const userId = req.user?._id?.toString() || req.user?.id || 'unknown';
-    await Notification.updateMany(
-      { read_by: { $ne: userId } },
-      { $addToSet: { read_by: userId } }
-    );
-    res.json({ success: true });
+    const staffId = req.user.id;
+    const hotelId = req.user.hotel_id;
+
+    const unreadCount = await notificationService.getUnreadCount(staffId, hotelId);
+
+    res.json({
+      success: true,
+      data: {
+        unreadCount: unreadCount
+      }
+    });
   } catch (err) {
-    console.error('[Notifications] Mark all read error:', err);
-    res.status(500).json({ error: 'Failed to mark all as read' });
+    next(err);
+  }
+};
+
+// PUT /notifications/:id/read — mark single notification as read
+exports.markAsRead = async (req, res, next) => {
+  try {
+    const { notificationId } = req.params;
+    const staffId = req.user.id;
+
+    const notification = await notificationService.markAsRead(notificationId, staffId);
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        error: "Notification not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: notification
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PUT /notifications/read-all — mark all notifications as read
+exports.markAllAsRead = async (req, res, next) => {
+  try {
+    const staffId = req.user.id;
+    const hotelId = req.user.hotel_id;
+
+    const result = await notificationService.markAllAsRead(staffId, hotelId);
+
+    res.json({
+      success: true,
+      data: {
+        modifiedCount: result.modifiedCount
+      }
+    });
+  } catch (err) {
+    next(err);
   }
 };
 
 // DELETE /notifications/:id — delete a notification
-const deleteNotification = async (req, res) => {
+exports.deleteNotification = async (req, res, next) => {
   try {
-    await Notification.deleteOne({ _id: req.params.id });
-    res.json({ success: true });
+    const { notificationId } = req.params;
+    const staffId = req.user.id;
+
+    const result = await Notification.findOneAndDelete({
+      _id: notificationId,
+      recipientId: staffId
+    });
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: "Notification not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { deleted: true }
+    });
   } catch (err) {
-    console.error('[Notifications] Delete error:', err);
-    res.status(500).json({ error: 'Failed to delete notification' });
+    next(err);
   }
 };
 
-module.exports = {
-  getNotifications,
-  createNotification,
-  markAsRead,
-  markAllAsRead,
-  deleteNotification
+// GET /notifications/:id — get single notification details
+exports.getNotificationById = async (req, res, next) => {
+  try {
+    const { notificationId } = req.params;
+    const staffId = req.user.id;
+
+    const notification = await Notification.findOne({
+      _id: notificationId,
+      recipientId: staffId
+    })
+      .populate("relatedTicketId")
+      .populate("relatedReviewId");
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        error: "Notification not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: notification
+    });
+  } catch (err) {
+    next(err);
+  }
 };

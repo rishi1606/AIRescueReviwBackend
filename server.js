@@ -9,12 +9,12 @@ const authRoutes = require("./routes/authRoutes");
 const hotelRoutes = require("./routes/hotelRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
-const staffRoutes = require("./routes/staffRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
 const importRoutes = require("./routes/importRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const cronRoutes = require("./routes/cronRoutes");
-const notificationRoutes = require("./routes/notificationRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 const { initCronJobs } = require("./services/cronService");
 const errorHandler = require("./middleware/errorHandler");
 
@@ -39,12 +39,12 @@ app.use("/api/auth", authRoutes);
 app.use("/api/hotel", hotelRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/tickets", ticketRoutes);
-app.use("/api/staff", staffRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/import", importRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/cron", cronRoutes);
-app.use("/api/notifications", notificationRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Error Handler
 app.use(errorHandler);
