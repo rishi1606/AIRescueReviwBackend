@@ -10,8 +10,24 @@ const bcrypt = require("bcryptjs");
 
 exports.getBusinesses = async (req, res, next) => {
   try {
-    // Exclude the superadmin's own hotel from the results
-    const query = req.user.role === "superadmin" && req.user.hotel_id ? { _id: { $ne: req.user.hotel_id } } : {};
+    let query = {};
+
+    // Build query based on user role
+    if (req.user.role === "superadmin") {
+      // Superadmin sees all except their own hotel
+      query = req.user.hotel_id ? { _id: { $ne: req.user.hotel_id } } : {};
+    } else if (req.user.role === "owner" || req.user.role === "property_manager") {
+      // Owner/Property Manager see only their business
+      const staff = await Staff.findById(req.user.id);
+      if (staff?.business_id) {
+        query = { _id: staff.business_id };
+      } else {
+        return res.json({ success: true, data: [] });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
     const businesses = await Hotel.find(query).lean();
 
     // Enrich with property counts and review counts
@@ -171,9 +187,22 @@ exports.getAllProperties = async (req, res, next) => {
   try {
     const { business_id } = req.query;
     let query = {};
-    if (business_id) query._id = business_id;
 
-    // Superadmin sees all properties across all businesses
+    // Build query based on user role
+    if (req.user.role === "superadmin") {
+      // Superadmin sees all properties across all businesses
+      if (business_id) query._id = business_id;
+    } else if (req.user.role === "owner" || req.user.role === "property_manager") {
+      // Owner/Property Manager see only their business properties
+      const staff = await Staff.findById(req.user.id);
+      if (staff?.business_id) {
+        query = { _id: staff.business_id };
+      } else {
+        return res.json({ success: true, data: [] });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
 
     const hotels = await Hotel.find(query).lean();
     const allProperties = [];

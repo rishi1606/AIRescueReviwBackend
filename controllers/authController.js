@@ -79,13 +79,24 @@ exports.login = async (req, res, next) => {
     const isMatch = await bcrypt.compare(password, staff.password);
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
-    // Block login if business is deactivated (superadmins are exempt)
-    if (staff.role !== "superadmin" && staff.hotelId && staff.hotelId.is_active === false) {
+    // Determine hotel_id based on role
+    let hotel_id = staff.hotelId?._id || staff.hotelId;
+
+    // For owner and property_manager, use business_id
+    if ((staff.role === "owner" || staff.role === "property_manager") && staff.business_id) {
+      hotel_id = staff.business_id;
+      // Check if business is active
+      const business = await Hotel.findById(staff.business_id);
+      if (business && business.is_active === false) {
+        return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
+      }
+    } else if (staff.role !== "superadmin" && staff.hotelId && staff.hotelId.is_active === false) {
+      // Block login if business is deactivated (superadmins are exempt)
       return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
     }
 
-    // Ensure staff has a valid hotel
-    if (!staff.hotelId) {
+    // For legacy users without business_id, ensure they have a valid hotel
+    if (!hotel_id) {
       let hotel = await Hotel.findOne();
       if (!hotel) {
         hotel = new Hotel({
@@ -95,18 +106,18 @@ exports.login = async (req, res, next) => {
         });
         await hotel.save();
       }
-      console.log(hotel, 'kkdgdkgkdg')
+      hotel_id = hotel._id;
       staff.hotelId = hotel._id;
       await staff.save();
-      await staff.populate("hotelId");
     }
 
     const token = jwt.sign(
       {
         id: staff._id,
-        hotel_id: staff.hotelId?._id || staff.hotelId,
+        hotel_id: hotel_id,
         role: staff.role,
-        department: staff.department
+        department: staff.department,
+        business_id: staff.business_id
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
@@ -122,8 +133,10 @@ exports.login = async (req, res, next) => {
           email: staff.email,
           role: staff.role,
           department: staff.department,
-          hotel_id: staff.hotelId?._id || staff.hotelId,
+          hotel_id: hotel_id,
           hotel_name: staff.hotelId?.hotel_name,
+          business_id: staff.business_id,
+          property_id: staff.property_id,
           onboarding_complete: staff.onboarding_complete
         }
       }

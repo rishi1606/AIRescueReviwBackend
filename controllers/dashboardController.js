@@ -18,19 +18,35 @@ async function getUserDepartment(req) {
 
 exports.getStats = async (req, res, next) => {
   try {
-    const hotel_id = req.user.hotel_id;
+    // For Business Owner, use business_id; otherwise use hotel_id
+    let hotel_id = req.user.hotel_id;
+    console.log('[getStats] User role:', req.user.role, 'Initial hotel_id:', hotel_id);
+
+    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
+      const staff = await Staff.findById(req.user.id);
+      console.log('[getStats] Staff found:', !!staff, 'business_id:', staff?.business_id);
+      if (staff?.business_id) {
+        hotel_id = staff.business_id;
+      }
+    }
+    console.log('[getStats] Final hotel_id:', hotel_id);
+
     const userDept = await getUserDepartment(req);
+    console.log('[getStats] userDept:', userDept, 'req.user.department:', req.user.department);
 
     // Build the query matches
     let reviewQuery = { hotel_id };
     let ticketQuery = { hotel_id };
     let ratingMatch = { hotel_id: new mongoose.Types.ObjectId(hotel_id) };
+    console.log('[getStats] reviewQuery before dept:', reviewQuery);
 
     if (userDept) {
       reviewQuery.primary_department = userDept;
       ticketQuery.department = userDept;
       ratingMatch.primary_department = userDept;
+      console.log('[getStats] Added department filter:', userDept);
     }
+    console.log('[getStats] reviewQuery after dept:', reviewQuery);
 
     const [
       totalReviews,
@@ -78,7 +94,15 @@ exports.getStats = async (req, res, next) => {
 
 exports.getSentimentTrend = async (req, res, next) => {
   try {
-    const hotel_id = req.user.hotel_id;
+    // For Business Owner, use business_id; otherwise use hotel_id
+    let hotel_id = req.user.hotel_id;
+    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
+      const staff = await Staff.findById(req.user.id);
+      if (staff?.business_id) {
+        hotel_id = staff.business_id;
+      }
+    }
+
     const { range = 7 } = req.query;
     const days = parseInt(range);
 
@@ -117,7 +141,15 @@ exports.getSentimentTrend = async (req, res, next) => {
 
 exports.getRecentReviews = async (req, res, next) => {
   try {
-    const hotel_id = req.user.hotel_id;
+    // For Business Owner, use business_id; otherwise use hotel_id
+    let hotel_id = req.user.hotel_id;
+    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
+      const staff = await Staff.findById(req.user.id);
+      if (staff?.business_id) {
+        hotel_id = staff.business_id;
+      }
+    }
+
     const userDept = await getUserDepartment(req);
 
     let query = { hotel_id };

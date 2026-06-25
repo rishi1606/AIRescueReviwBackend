@@ -4,6 +4,7 @@ const reviewSchema = new mongoose.Schema({
   review_id: { type: String, required: true, unique: true },
   hotel_id: { type: mongoose.Schema.Types.ObjectId, ref: "Hotel", required: true },
   hotel_name: { type: String },
+  property_name: { type: String },
   reviewer_name: { type: String, required: true },
   rating: { type: Number, required: true },
   is_active: { type: Boolean, default: true },

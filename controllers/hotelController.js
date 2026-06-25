@@ -6,8 +6,18 @@ const { initCronJobs } = require("../services/cronService");
 exports.getHotel = async (req, res, next) => {
   try {
     let hotel;
-    if (req.user && req.user.hotel_id) {
-      hotel = await Hotel.findById(req.user.hotel_id).lean();
+    let hotelId = req.user?.hotel_id;
+
+    // For Business Owner, use business_id; otherwise use hotel_id
+    if (req.user?.role === 'owner' || req.user?.role === 'property_manager') {
+      const staff = await Staff.findById(req.user.id);
+      if (staff?.business_id) {
+        hotelId = staff.business_id;
+      }
+    }
+
+    if (hotelId) {
+      hotel = await Hotel.findById(hotelId).lean();
     }
     if (!hotel) {
       hotel = await Hotel.findOne().lean();

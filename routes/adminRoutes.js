@@ -4,21 +4,21 @@ const auth = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
 const adminController = require("../controllers/adminController");
 
-// All routes require auth + superadmin role
-router.use(auth, adminOnly);
+// All routes require auth
+router.use(auth);
 
-// Businesses
+// Businesses - GET allowed for owner/property_manager, write operations for superadmin only
 router.get("/businesses", adminController.getBusinesses);
-router.post("/businesses", adminController.addBusiness);
-router.put("/businesses/:id", adminController.updateBusiness);
-router.delete("/businesses/:id", adminController.deleteBusiness);
-router.patch("/businesses/:id/toggle-active", adminController.toggleBusinessActive);
+router.post("/businesses", adminOnly, adminController.addBusiness);
+router.put("/businesses/:id", adminOnly, adminController.updateBusiness);
+router.delete("/businesses/:id", adminOnly, adminController.deleteBusiness);
+router.patch("/businesses/:id/toggle-active", adminOnly, adminController.toggleBusinessActive);
 
-// Properties (cross-business)
+// Properties (cross-business) - GET allowed for owner/property_manager, write operations for superadmin only
 router.get("/properties", adminController.getAllProperties);
-router.post("/properties", adminController.addPropertyToAnyBusiness);
-router.put("/properties/:propertyId", adminController.updateAnyProperty);
-router.delete("/properties/:propertyId", adminController.deleteAnyProperty);
-router.patch("/properties/:propertyId/toggle-active", adminController.togglePropertyActive);
+router.post("/properties", adminOnly, adminController.addPropertyToAnyBusiness);
+router.put("/properties/:propertyId", adminOnly, adminController.updateAnyProperty);
+router.delete("/properties/:propertyId", adminOnly, adminController.deleteAnyProperty);
+router.patch("/properties/:propertyId/toggle-active", adminOnly, adminController.togglePropertyActive);
 
 module.exports = router;
