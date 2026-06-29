@@ -3,22 +3,34 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const staffController = require('../controllers/staffController');
 
-// Create staff
-router.post('/', auth, staffController.createStaff);
+// ── STAFF MANAGEMENT ROUTES ─────────────────────────────────────────────────
 
-// Get all staff for a business
-router.get('/business/:business_id', auth, staffController.getStaffByBusiness);
+// Create staff account
+// POST /api/staff/create
+router.post('/create', auth, staffController.createStaff);
 
-// Get staff for a property
-router.get('/business/:business_id/property/:property_id', auth, staffController.getStaffByProperty);
+// List all staff for a business
+// GET /api/staff/list?business_id=xxx
+router.get('/list', auth, staffController.getStaffByBusiness);
+
+// Get current user profile
+// GET /api/staff/me
+router.get('/me', auth, staffController.getCurrentUser);
+
+// Get staff by ID
+// GET /api/staff/:id
+router.get('/:id', auth, staffController.getStaffById);
 
 // Update staff
+// PUT /api/staff/:id
 router.put('/:id', auth, staffController.updateStaff);
 
-// Deactivate staff (soft delete)
-router.patch('/:id/deactivate', auth, staffController.deactivateStaff);
+// Change password
+// POST /api/staff/:id/change-password
+router.post('/:id/change-password', auth, staffController.changePassword);
 
-// Delete staff (hard delete)
+// Delete/Deactivate staff
+// DELETE /api/staff/:id
 router.delete('/:id', auth, staffController.deleteStaff);
 
 module.exports = router;

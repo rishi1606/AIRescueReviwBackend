@@ -17,29 +17,6 @@ exports.createStaff = async (req, res, next) => {
       });
     }
 
-    // Validate role creation permissions
-    if (current_user.role === 'superadmin' && role !== 'owner') {
-      return res.status(403).json({
-        success: false,
-        message: "Superadmin can only create Business Owners"
-      });
-    } else if (current_user.role === 'owner' && role !== 'property_manager') {
-      return res.status(403).json({
-        success: false,
-        message: "Business Owner can only create Property Managers"
-      });
-    } else if (current_user.role === 'property_manager' && role !== 'staff') {
-      return res.status(403).json({
-        success: false,
-        message: "Property Manager can only create Staff"
-      });
-    } else if (current_user.role !== 'superadmin' && current_user.role !== 'owner' && current_user.role !== 'property_manager') {
-      return res.status(403).json({
-        success: false,
-        message: "You cannot create staff"
-      });
-    }
-
     // Check if email already exists
     const exists = await Staff.findOne({ email: email.toLowerCase() });
     if (exists) {
@@ -47,6 +24,40 @@ exports.createStaff = async (req, res, next) => {
         success: false,
         message: "Email already in use"
       });
+    }
+
+    // Department validation: Staff requires a Lead in that department
+    if (role === 'staff' && department) {
+      const departmentLeadCount = await Staff.countDocuments({
+        business_id,
+        department,
+        role: 'lead',
+        is_active: true
+      });
+
+      if (departmentLeadCount === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot add Staff to "${department}" department without a Lead. First add a Lead to this department.`
+        });
+      }
+    }
+
+    // Department validation: Only 1 Lead per department
+    if (role === 'lead' && department) {
+      const existingLeadCount = await Staff.countDocuments({
+        business_id,
+        department,
+        role: 'lead',
+        is_active: true
+      });
+
+      if (existingLeadCount > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Only 1 Lead allowed per department. "${department}" already has a Lead.`
+        });
+      }
     }
 
     // Hash password
@@ -89,37 +100,53 @@ exports.createStaff = async (req, res, next) => {
 // GET all staff for a business
 exports.getStaffByBusiness = async (req, res, next) => {
   try {
-    const { business_id } = req.params;
+    // Handle both query and params for flexibility
+    const business_id = req.query.business_id || req.params.business_id;
     const current_user = req.user;
 
-    // Build query based on user role
-    let query = { business_id };
+    // Validation
+    if (!business_id) {
+      return res.status(400).json({
+        success: false,
+        error: "business_id is required"
+      });
+    }
 
-    if (current_user.role === 'superadmin') {
-      // Superadmin sees all staff
-      query = { business_id };
-    } else if (current_user.role === 'owner') {
-      // Business Owner sees only Property Managers
-      query = { business_id, role: 'property_manager' };
-    } else if (current_user.role === 'property_manager') {
-      // Property Manager sees only Staff under their property
-      const pmStaff = await Staff.findById(current_user.id);
-      query = { business_id, property_id: pmStaff?.property_id, role: 'staff' };
-    } else {
+    // Build query - get all staff for the business (no role filter)
+    let query = { business_id, is_active: true };
+
+    // Authorization check for owner
+    if (current_user.role === 'owner' && current_user.business_id) {
+      // Owner can only see staff from their own business
+      if (current_user.business_id.toString() !== business_id) {
+        return res.status(403).json({
+          success: false,
+          error: "You can only view staff from your own business"
+        });
+      }
+    } else if (current_user.role !== 'superadmin' && current_user.role !== 'owner') {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized to view staff"
+        error: "Only owners and admins can view staff"
       });
     }
 
     const staff = await Staff.find(query)
       .select('-password')
       .populate('created_by', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ role: 1, createdAt: -1 });
 
-    res.json({ success: true, data: staff });
+    return res.status(200).json({
+      success: true,
+      total: staff.length,
+      data: staff
+    });
   } catch (err) {
-    next(err);
+    console.error('Get staff by business error:', err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch staff list"
+    });
   }
 };
 
@@ -195,5 +222,154 @@ exports.deactivateStaff = async (req, res, next) => {
     res.json({ success: true, data: staff, message: "Staff deactivated" });
   } catch (err) {
     next(err);
+  }
+};
+
+// GET CURRENT USER
+exports.getCurrentUser = async (req, res, next) => {
+  try {
+    if (!req.user || (!req.user._id && !req.user.email)) {
+      return res.status(401).json({
+        success: false,
+        error: "Not authenticated"
+      });
+    }
+
+    // Try to find by _id first, then by email
+    let staff = await Staff.findById(req.user._id)
+      .select('-password')
+      .populate('created_by', 'name email');
+
+    // If not found by ID, try by email
+    if (!staff && req.user.email) {
+      staff = await Staff.findOne({ email: req.user.email })
+        .select('-password')
+        .populate('created_by', 'name email');
+    }
+
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: "User profile not found"
+      });
+    }
+
+    // If staff has property_id, fetch the property to get hotel_name
+    let hotel_name = null;
+    if (staff.property_id) {
+      const Property = require('../models/Property');
+      const property = await Property.findById(staff.property_id).select('name');
+      hotel_name = property?.name || null;
+    }
+
+    // Return staff data with hotel_name
+    const staffData = staff.toObject ? staff.toObject() : staff;
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...staffData,
+        hotel_name: hotel_name
+      }
+    });
+  } catch (err) {
+    console.error('Get current user error:', err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch user profile"
+    });
+  }
+};
+
+// CHANGE PASSWORD
+exports.changePassword = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { currentPassword, newPassword } = req.body;
+
+    // Validation
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: "Current password and new password are required"
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: "New password must be at least 6 characters"
+      });
+    }
+
+    // Get staff member
+    const staff = await Staff.findById(id);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: "Staff member not found"
+      });
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, staff.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        success: false,
+        error: "Current password is incorrect"
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    staff.password = hashedPassword;
+    await staff.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully"
+    });
+  } catch (err) {
+    console.error('Change password error:', err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to change password"
+    });
+  }
+};
+
+// GET STAFF BY ID
+exports.getStaffById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Staff ID is required"
+      });
+    }
+
+    const staff = await Staff.findById(id)
+      .select('-password')
+      .populate('created_by', 'name email')
+      .populate('reporting_to', 'name role department');
+
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: "Staff member not found"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: staff
+    });
+  } catch (err) {
+    console.error('Get staff by ID error:', err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch staff member"
+    });
   }
 };

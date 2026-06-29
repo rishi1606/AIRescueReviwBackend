@@ -23,20 +23,10 @@ exports.getHotel = async (req, res, next) => {
       hotel = await Hotel.findOne().lean();
     }
     if (!hotel) {
-      const newHotel = new Hotel({
-        hotel_name: "Default Hotel",
-        number_of_rooms: 50,
-        city: "Default City",
-        properties: [
-          {
-            name: "Main Property",
-            city: "Default City",
-            rooms: 50
-          }
-        ]
+      return res.status(404).json({
+        success: false,
+        error: "Hotel not found. Please create a hotel first."
       });
-      await newHotel.save();
-      hotel = newHotel.toObject();
     }
 
     if (hotel.properties) {

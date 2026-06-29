@@ -96,6 +96,27 @@ const reviewSchema = new mongoose.Schema({
     timestamp: Number
   }],
   staff_mentions: [String],
+
+  // ── ASSIGNMENT FIELDS ───────────────────────────
+  assigned_to_staff_id: { type: String },
+  assigned_to_staff_name: { type: String },
+  assigned_to_role: { type: String }, // "staff" | "lead" | "owner"
+  assigned_by_id: { type: String }, // WHO assigned it
+  assigned_by_name: { type: String },
+  assigned_by_role: { type: String }, // "owner" | "lead"
+  assigned_at: { type: Number }, // WHEN assigned
+
+  // ── APPROVAL FIELDS ─────────────────────────────
+  approval_status: {
+    type: String,
+    enum: ["pending", "submitted", "approved", "rejected"],
+    default: "pending"
+  },
+  rejection_reason: { type: String }, // Feedback if rejected
+  rejection_by: { type: String }, // Who rejected it
+  rejection_at: { type: Number }, // When rejected
+
+  // ── FLAG FIELDS (Already exist, kept for reference) ─
   flag_reason_category: { type: String },
   flagged_by: { type: String },
   flagged_at: { type: Number },

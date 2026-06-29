@@ -7,9 +7,9 @@ const Ticket = require("../models/Ticket");
 const getHotelFilter = async (req) => {
   if (req.user.role === "superadmin") return {};
 
-  // For Business Owner, Property Manager, and Staff, use business_id; otherwise use hotel_id
+  // For Business Owner, Lead, Property Manager, and Staff, use business_id; otherwise use hotel_id
   let hotel_id = req.user.hotel_id;
-  if (req.user.role === 'owner' || req.user.role === 'property_manager' || req.user.role === 'staff') {
+  if (req.user.role === 'owner' || req.user.role === 'lead' || req.user.role === 'property_manager' || req.user.role === 'staff') {
     const staff = await Staff.findById(req.user.id);
     if (staff?.business_id) {
       hotel_id = staff.business_id;
@@ -28,14 +28,14 @@ exports.getReviews = async (req, res, next) => {
 
     if (sentiment && sentiment !== "ALL") query.sentiment = sentiment;
 
-    // Scoping for standard staff and department heads
-    if (req.user.role === "staff" || req.user.role === "dept_head") {
+    // Scoping for standard staff, leads, and department heads
+    if (req.user.role === "staff" || req.user.role === "lead" || req.user.role === "dept_head") {
       let userDept = req.user.department;
       if (!userDept) {
         const staff = await Staff.findById(req.user.id);
         if (staff) userDept = staff.department;
       }
-      console.log('[getReviews] Staff department resolved:', userDept);
+      console.log('[getReviews] ' + req.user.role + ' department resolved:', userDept);
       if (userDept) {
         query.primary_department = userDept;
       }
@@ -804,5 +804,655 @@ exports.getPendingStatus = async (req, res, next) => {
     res.json({ success: true, data: { pendingCount, totalCount } });
   } catch (err) {
     next(err);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 4: REVIEW ASSIGNMENT API
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ───────────────────────────────────────────────────────────────────────────
+// ASSIGN REVIEW TO STAFF
+// ───────────────────────────────────────────────────────────────────────────
+exports.assignReview = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { assigned_to_staff_id, assigned_to_staff_name, assigned_to_role } = req.body;
+
+    // ── VALIDATION ──────────────────────────────────────────────────────────
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Review ID is required"
+      });
+    }
+
+    if (!assigned_to_staff_id || !assigned_to_staff_id.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Staff ID is required"
+      });
+    }
+
+    if (!assigned_to_staff_name || !assigned_to_staff_name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Staff name is required"
+      });
+    }
+
+    if (!assigned_to_role || !["staff", "lead", "owner"].includes(assigned_to_role)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid staff role"
+      });
+    }
+
+    // ── FETCH REVIEW ────────────────────────────────────────────────────────
+    const review = await Review.findById(id);
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        error: "Review not found"
+      });
+    }
+
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only owners, leads, and admins can assign reviews"
+      });
+    }
+
+    // ── VERIFY STAFF EXISTS ─────────────────────────────────────────────────
+    const staff = await Staff.findById(assigned_to_staff_id);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: `Staff member "${assigned_to_staff_name}" not found`
+      });
+    }
+
+    if (!staff.is_active) {
+      return res.status(400).json({
+        success: false,
+        error: `Staff member "${assigned_to_staff_name}" is inactive`
+      });
+    }
+
+    // ── ASSIGN REVIEW ───────────────────────────────────────────────────────
+    review.assigned_to_staff_id = assigned_to_staff_id;
+    review.assigned_to_staff_name = assigned_to_staff_name;
+    review.assigned_to_role = assigned_to_role;
+    review.assigned_by_id = req.user._id;
+    review.assigned_by_name = req.user.name || req.user.email;
+    review.assigned_by_role = req.user.role;
+    review.assigned_at = Date.now();
+    review.approval_status = "pending";
+
+    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
+    if (!review.audit_log) review.audit_log = [];
+    review.audit_log.push({
+      action: "assigned",
+      actor: req.user.name || req.user.email,
+      details: `Assigned to ${assigned_to_staff_name} (${assigned_to_role})`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: `Review assigned to ${assigned_to_staff_name}`,
+      review: {
+        id: review._id,
+        review_id: review.review_id,
+        assigned_to_staff_name: review.assigned_to_staff_name,
+        assigned_to_role: review.assigned_to_role,
+        assigned_at: review.assigned_at
+      }
+    });
+  } catch (err) {
+    console.error("Assign review error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to assign review"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// UNASSIGN REVIEW
+// ───────────────────────────────────────────────────────────────────────────
+exports.unassignReview = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // ── VALIDATION ──────────────────────────────────────────────────────────
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Review ID is required"
+      });
+    }
+
+    // ── FETCH REVIEW ────────────────────────────────────────────────────────
+    const review = await Review.findById(id);
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        error: "Review not found"
+      });
+    }
+
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only owners, leads, and admins can unassign reviews"
+      });
+    }
+
+    const oldAssignee = review.assigned_to_staff_name || "Unassigned";
+
+    // ── UNASSIGN ────────────────────────────────────────────────────────────
+    review.assigned_to_staff_id = null;
+    review.assigned_to_staff_name = "Unassigned";
+    review.assigned_to_role = null;
+    review.assigned_by_id = null;
+    review.assigned_by_name = null;
+    review.assigned_by_role = null;
+    review.assigned_at = null;
+
+    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
+    if (!review.audit_log) review.audit_log = [];
+    review.audit_log.push({
+      action: "unassigned",
+      actor: req.user.name || req.user.email,
+      details: `Unassigned from ${oldAssignee}`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: `Review unassigned from ${oldAssignee}`
+    });
+  } catch (err) {
+    console.error("Unassign review error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to unassign review"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// GET MY REVIEW QUEUE (Staff only sees their assigned reviews)
+// ───────────────────────────────────────────────────────────────────────────
+exports.getMyQueue = async (req, res, next) => {
+  try {
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "staff" && req.user.role !== "lead" && req.user.role !== "owner") {
+      return res.status(403).json({
+        success: false,
+        error: "Only staff, leads, and owners can view queues"
+      });
+    }
+
+    // ── BUILD FILTER ────────────────────────────────────────────────────────
+    let filter = {};
+
+    if (req.user.role === "staff") {
+      // Staff sees only reviews assigned to them
+      filter.assigned_to_staff_id = req.user._id.toString();
+    } else if (req.user.role === "lead") {
+      // Lead sees reviews assigned to their team
+      const staff = await Staff.find({
+        business_id: req.user.business_id,
+        reporting_to: req.user._id,
+        is_active: true
+      }).select("_id");
+
+      const staffIds = staff.map(s => s._id.toString());
+      staffIds.push(req.user._id.toString()); // Include themselves
+
+      filter.assigned_to_staff_id = { $in: staffIds };
+    } else if (req.user.role === "owner") {
+      // Owner sees all unresponded reviews for their business
+      const hotelFilter = await getHotelFilter(req);
+      filter = { ...hotelFilter };
+    }
+
+    // ── FETCH REVIEWS ───────────────────────────────────────────────────────
+    const reviews = await Review.find(filter)
+      .select(
+        "review_id reviewer_name rating review_text review_date platform assigned_to_staff_name " +
+        "approval_status response_text submitted_by assigned_at primary_department urgency sentiment"
+      )
+      .sort({ assigned_at: -1, urgency: -1 });
+
+    if (!reviews || reviews.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No reviews in queue",
+        reviews: [],
+        total: 0
+      });
+    }
+
+    // ── COUNT BY STATUS ─────────────────────────────────────────────────────
+    const stats = {
+      total: reviews.length,
+      pending_response: reviews.filter(r => !r.response_text || r.approval_status === "pending").length,
+      submitted_for_approval: reviews.filter(r => r.approval_status === "submitted").length,
+      approved: reviews.filter(r => r.approval_status === "approved").length
+    };
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      stats,
+      reviews: reviews.map(r => ({
+        id: r._id,
+        review_id: r.review_id,
+        reviewer_name: r.reviewer_name,
+        rating: r.rating,
+        review_text: r.review_text,
+        review_date: r.review_date,
+        platform: r.platform,
+        assigned_to: r.assigned_to_staff_name,
+        primary_department: r.primary_department,
+        urgency: r.urgency,
+        sentiment: r.sentiment,
+        approval_status: r.approval_status,
+        has_response: !!r.response_text,
+        submitted_by: r.submitted_by,
+        assigned_at: r.assigned_at
+      }))
+    });
+  } catch (err) {
+    console.error("Get my queue error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch review queue"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// SUBMIT RESPONSE FOR APPROVAL
+// ───────────────────────────────────────────────────────────────────────────
+exports.submitResponse = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { response_text, response_tone } = req.body;
+
+    // ── VALIDATION ──────────────────────────────────────────────────────────
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Review ID is required"
+      });
+    }
+
+    if (!response_text || !response_text.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Response text is required"
+      });
+    }
+
+    if (response_text.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        error: "Response must be at least 10 characters"
+      });
+    }
+
+    if (response_text.trim().length > 5000) {
+      return res.status(400).json({
+        success: false,
+        error: "Response cannot exceed 5000 characters"
+      });
+    }
+
+    if (!response_tone || !["professional", "apologetic", "friendly", "neutral"].includes(response_tone)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid response tone. Must be professional, apologetic, friendly, or neutral"
+      });
+    }
+
+    // ── FETCH REVIEW ────────────────────────────────────────────────────────
+    const review = await Review.findById(id);
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        error: "Review not found"
+      });
+    }
+
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    // Staff can only submit for their own reviews
+    if (req.user.role === "staff") {
+      if (review.assigned_to_staff_id !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          error: "You can only submit responses for reviews assigned to you"
+        });
+      }
+    } else if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only staff, leads, and owners can submit responses"
+      });
+    }
+
+    // ── SUBMIT RESPONSE ─────────────────────────────────────────────────────
+    review.response_text = response_text.trim();
+    review.response_tone = response_tone;
+    review.submitted_by = req.user.name || req.user.email;
+    review.approval_status = "submitted";
+
+    // ── RESPONSE HISTORY ────────────────────────────────────────────────────
+    if (!review.response_history) review.response_history = [];
+    review.response_history.push({
+      version: review.response_history.length + 1,
+      text: response_text.trim(),
+      tone: response_tone,
+      editor: req.user.name || req.user.email,
+      timestamp: Date.now(),
+      is_approved: false
+    });
+
+    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
+    if (!review.audit_log) review.audit_log = [];
+    review.audit_log.push({
+      action: "submitted",
+      actor: req.user.name || req.user.email,
+      details: `Submitted response with ${response_tone} tone`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: "Response submitted for approval",
+      submission: {
+        id: review._id,
+        review_id: review.review_id,
+        approval_status: review.approval_status,
+        submitted_by: review.submitted_by,
+        submitted_at: Date.now()
+      }
+    });
+  } catch (err) {
+    console.error("Submit response error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to submit response"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// GET PENDING APPROVALS (For Leads/Owners)
+// ───────────────────────────────────────────────────────────────────────────
+exports.getPendingApprovals = async (req, res, next) => {
+  try {
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only leads and owners can view pending approvals"
+      });
+    }
+
+    // ── BUILD FILTER ────────────────────────────────────────────────────────
+    let filter = { approval_status: "submitted" };
+
+    if (req.user.role === "lead") {
+      // Lead sees responses from their team only
+      const staff = await Staff.find({
+        reporting_to: req.user._id,
+        is_active: true
+      }).select("_id");
+
+      const staffIds = staff.map(s => s._id.toString());
+      filter.assigned_to_staff_id = { $in: staffIds };
+    }
+
+    // ── FETCH REVIEWS ───────────────────────────────────────────────────────
+    const reviews = await Review.find(filter)
+      .select(
+        "review_id reviewer_name rating review_text platform response_text response_tone " +
+        "submitted_by assigned_to_staff_name primary_department sentiment"
+      )
+      .sort({ assigned_at: -1 });
+
+    if (!reviews || reviews.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No responses pending approval",
+        reviews: [],
+        total: 0
+      });
+    }
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      total: reviews.length,
+      reviews: reviews.map(r => ({
+        id: r._id,
+        review_id: r.review_id,
+        reviewer_name: r.reviewer_name,
+        rating: r.rating,
+        review_text: r.review_text,
+        platform: r.platform,
+        submitted_by: r.submitted_by,
+        assigned_to: r.assigned_to_staff_name,
+        primary_department: r.primary_department,
+        sentiment: r.sentiment,
+        response_text: r.response_text,
+        response_tone: r.response_tone
+      }))
+    });
+  } catch (err) {
+    console.error("Get pending approvals error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch pending approvals"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// APPROVE RESPONSE
+// ───────────────────────────────────────────────────────────────────────────
+exports.approveResponse = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { approved_by } = req.body;
+
+    // ── VALIDATION ──────────────────────────────────────────────────────────
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Review ID is required"
+      });
+    }
+
+    // ── FETCH REVIEW ────────────────────────────────────────────────────────
+    const review = await Review.findById(id);
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        error: "Review not found"
+      });
+    }
+
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only leads and owners can approve responses"
+      });
+    }
+
+    // ── VERIFY RESPONSE EXISTS ──────────────────────────────────────────────
+    if (!review.response_text) {
+      return res.status(400).json({
+        success: false,
+        error: "No response to approve"
+      });
+    }
+
+    if (review.approval_status === "approved") {
+      return res.status(400).json({
+        success: false,
+        error: "This response is already approved"
+      });
+    }
+
+    // ── APPROVE RESPONSE ────────────────────────────────────────────────────
+    review.approval_status = "approved";
+    review.approved_by = approved_by || req.user.name || req.user.email;
+    review.approved_at = Date.now();
+
+    // ── UPDATE RESPONSE HISTORY ─────────────────────────────────────────────
+    if (review.response_history && review.response_history.length > 0) {
+      review.response_history[review.response_history.length - 1].is_approved = true;
+    }
+
+    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
+    if (!review.audit_log) review.audit_log = [];
+    review.audit_log.push({
+      action: "approved",
+      actor: approved_by || req.user.name || req.user.email,
+      details: `Response approved with ${review.response_tone} tone`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: "Response approved and posted to guest",
+      approval: {
+        id: review._id,
+        review_id: review.review_id,
+        approval_status: review.approval_status,
+        approved_by: review.approved_by,
+        approved_at: review.approved_at
+      }
+    });
+  } catch (err) {
+    console.error("Approve response error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to approve response"
+    });
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// REJECT RESPONSE
+// ───────────────────────────────────────────────────────────────────────────
+exports.rejectResponse = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rejection_reason } = req.body;
+
+    // ── VALIDATION ──────────────────────────────────────────────────────────
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "Review ID is required"
+      });
+    }
+
+    if (!rejection_reason || !rejection_reason.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Rejection reason is required"
+      });
+    }
+
+    // ── FETCH REVIEW ────────────────────────────────────────────────────────
+    const review = await Review.findById(id);
+    if (!review) {
+      return res.status(404).json({
+        success: false,
+        error: "Review not found"
+      });
+    }
+
+    // ── AUTHORIZATION ──────────────────────────────────────────────────────
+    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
+      return res.status(403).json({
+        success: false,
+        error: "Only leads and owners can reject responses"
+      });
+    }
+
+    // ── VERIFY RESPONSE EXISTS ──────────────────────────────────────────────
+    if (!review.response_text) {
+      return res.status(400).json({
+        success: false,
+        error: "No response to reject"
+      });
+    }
+
+    if (review.approval_status === "approved") {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot reject an already approved response"
+      });
+    }
+
+    // ── REJECT RESPONSE ─────────────────────────────────────────────────────
+    review.approval_status = "rejected";
+    review.rejection_reason = rejection_reason.trim();
+    review.rejection_by = req.user.name || req.user.email;
+    review.rejection_at = Date.now();
+
+    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
+    if (!review.audit_log) review.audit_log = [];
+    review.audit_log.push({
+      action: "rejected",
+      actor: req.user.name || req.user.email,
+      details: `Response rejected: ${rejection_reason.trim()}`,
+      timestamp: Date.now()
+    });
+
+    await review.save();
+
+    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: "Response rejected and sent back to staff",
+      rejection: {
+        id: review._id,
+        review_id: review.review_id,
+        approval_status: review.approval_status,
+        rejection_reason: review.rejection_reason,
+        rejected_at: review.rejection_at
+      }
+    });
+  } catch (err) {
+    console.error("Reject response error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to reject response"
+    });
   }
 };

@@ -8,7 +8,7 @@ const staffSchema = new mongoose.Schema({
   // Role hierarchy
   role: {
     type: String,
-    enum: ["superadmin", "owner", "property_manager", "staff"],
+    enum: ["superadmin", "owner", "lead", "staff"],
     default: "staff"
   },
 
@@ -31,12 +31,22 @@ const staffSchema = new mongoose.Schema({
   // Who created this staff member
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
 
+  // Reporting structure
+  reporting_to: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Staff",
+    default: null
+  }, // Staff reports to this Lead/Manager
+
   // Status
   is_active: { type: Boolean, default: true },
 
   // UI
   avatar_initials: { type: String },
-  onboarding_complete: { type: Boolean, default: false }
+  onboarding_complete: { type: Boolean, default: false },
+
+  // Tracking
+  last_login: { type: Date, default: null }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Staff", staffSchema);

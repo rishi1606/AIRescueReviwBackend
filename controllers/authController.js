@@ -95,21 +95,7 @@ exports.login = async (req, res, next) => {
       return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
     }
 
-    // For legacy users without business_id, ensure they have a valid hotel
-    if (!hotel_id) {
-      let hotel = await Hotel.findOne();
-      if (!hotel) {
-        hotel = new Hotel({
-          hotel_name: "Default Hotel",
-          number_of_rooms: 50,
-          city: "Default City"
-        });
-        await hotel.save();
-      }
-      hotel_id = hotel._id;
-      staff.hotelId = hotel._id;
-      await staff.save();
-    }
+    // Legacy hotel assignment removed - users must have valid business_id
 
     const token = jwt.sign(
       {
