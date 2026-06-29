@@ -35,7 +35,6 @@ exports.getBusinesses = async (req, res, next) => {
       businesses.map(async (biz) => {
         const reviewCount = await Review.countDocuments({ hotel_id: biz._id });
         const staffCount = await Staff.countDocuments({ hotelId: biz._id });
-        const owner = await Staff.findOne({ hotelId: biz._id, role: { $in: ["gm", "superadmin"] } }).select("name email");
         return {
           _id: biz._id,
           hotel_name: biz.hotel_name,
@@ -44,7 +43,7 @@ exports.getBusinesses = async (req, res, next) => {
           propertyCount: (biz.properties || []).length,
           reviewCount,
           staffCount,
-          owner: owner ? { name: owner.name, email: owner.email } : null,
+          owner: biz.admin_email ? { email: biz.admin_email, name: biz.admin_name } : null,
           createdAt: biz.createdAt || biz._id.getTimestamp(),
           is_active: biz.is_active !== false
         };
@@ -80,6 +79,8 @@ exports.addBusiness = async (req, res, next) => {
       hotel_name: hotel_name.trim(),
       city: city?.trim() || "",
       number_of_rooms: parseInt(number_of_rooms),
+      admin_email: admin_email.trim(),
+      admin_name: admin_name?.trim() || hotel_name.trim(),
       properties: []
     });
     await hotel.save();
@@ -90,7 +91,7 @@ exports.addBusiness = async (req, res, next) => {
       name: admin_name || hotel_name,
       email: admin_email,
       password: hashedPassword,
-      role: "gm",
+      role: "owner",
       hotelId: hotel._id,
       avatar_initials: (admin_name || hotel_name).split(" ").map(n => n[0]).join("").toUpperCase(),
       onboarding_complete: false

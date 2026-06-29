@@ -1,9 +1,54 @@
 const Groq = require("groq-sdk");
-const apiKey = process.env.GROQ_API_KEY;
 
-let groq;
-if (apiKey) {
-  groq = new Groq({ apiKey });
+// Analysis: 3 Grok accounts (rotated for load balancing)
+const analysisApiKeys = [
+  process.env.GROQ_API_KEY_1,
+  process.env.GROQ_API_KEY_2,
+  process.env.GROQ_API_KEY_3
+].filter(Boolean);
+
+// Drafting: Separate dedicated account
+const draftingApiKey = process.env.DRAFT_API_KEY;
+
+// Fallback to old GROQ_API_KEY if new keys not found
+const fallbackAnalysisKey = process.env.GROQ_API_KEY;
+
+let groqClients = {};
+let currentAnalysisKeyIndex = 0;
+
+// Log available keys
+console.log(`[Groq] Analysis keys loaded: ${analysisApiKeys.length}`);
+console.log(`[Groq] Drafting key loaded: ${draftingApiKey ? 'Yes' : 'No'}`);
+console.log(`[Groq] Fallback key available: ${fallbackAnalysisKey ? 'Yes' : 'No'}`);
+
+// Initialize analysis clients
+if (analysisApiKeys.length > 0) {
+  analysisApiKeys.forEach((key, idx) => {
+    groqClients[`analysis_${idx}`] = new Groq({ apiKey: key });
+  });
+} else if (fallbackAnalysisKey) {
+  console.warn(`[Groq] No GROQ_API_KEY_1/2/3 found. Using fallback GROQ_API_KEY`);
+  groqClients[`analysis_0`] = new Groq({ apiKey: fallbackAnalysisKey });
+} else {
+  console.error(`[Groq] CRITICAL: No Groq API keys configured!`);
+}
+
+// Initialize drafting client
+if (draftingApiKey) {
+  groqClients.drafting = new Groq({ apiKey: draftingApiKey });
+}
+
+// Helper: Get next analysis client (round-robin)
+function getNextAnalysisClient() {
+  if (analysisApiKeys.length === 0) return null;
+  const clientKey = `analysis_${currentAnalysisKeyIndex}`;
+  currentAnalysisKeyIndex = (currentAnalysisKeyIndex + 1) % analysisApiKeys.length;
+  return groqClients[clientKey];
+}
+
+// Helper: Get drafting client
+function getDraftingClient() {
+  return groqClients.drafting;
 }
 
 // ═══════════════════════════════════════════
@@ -34,16 +79,19 @@ async function throttle() {
   lastCallAt = Date.now();
 }
 
-async function callGroqWithRetry(params, attempt = 0) {
+async function callGroqWithRetry(params, attempt = 0, groqClient = null) {
   await throttle();
   try {
-    return await groq.chat.completions.create(params);
+    if (!groqClient) {
+      throw new Error("No Groq API key configured");
+    }
+    return await groqClient.chat.completions.create(params);
   } catch (err) {
     const status = err?.status || err?.response?.status;
     const retriable = status === 429 || (status >= 500 && status < 600) || err.code === "ECONNRESET";
     if (retriable && attempt < MAX_API_RETRIES) {
       await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
-      return callGroqWithRetry(params, attempt + 1);
+      return callGroqWithRetry(params, attempt + 1, groqClient);
     }
     throw err;
   }
@@ -180,6 +228,8 @@ async function analyseSingleBatch(reviews, attempt = 0) {
   const N = reviews.length;
   const maxTokens = 350 + N * 260; // headroom per review so verbose JSON doesn't get truncated
 
+  const groqClient = getNextAnalysisClient();
+
   let raw;
   try {
     const completion = await callGroqWithRetry({
@@ -191,7 +241,7 @@ async function analyseSingleBatch(reviews, attempt = 0) {
       temperature: 0,
       max_tokens: maxTokens,
       response_format: { type: "json_object" }
-    });
+    }, attempt, groqClient);
     raw = completion.choices[0].message.content;
   } catch (err) {
     console.error("[Batch] Groq API error:", err.message || err);
@@ -232,7 +282,7 @@ async function analyseSingleBatch(reviews, attempt = 0) {
 // PUBLIC: chunks any input into BATCH_SIZE pieces automatically
 // ═══════════════════════════════════════════
 exports.analyseBatch = async function analyseBatch(reviews) {
-  if (!groq || !reviews || reviews.length === 0) return [];
+  if (analysisApiKeys.length === 0 || !reviews || reviews.length === 0) return [];
 
   const sanitized = reviews.map(sanitizeReview);
 
@@ -260,7 +310,8 @@ exports.analyseReview = async (text, rating) => {
 // TASK 2 — DRAFT GENERATION (on-demand, GM triggered)
 // ═══════════════════════════════════════════
 exports.generateReply = async (text, tone = "Formal") => {
-  if (!groq) return "Thank you for your feedback.";
+  const groqClient = getDraftingClient();
+  if (!groqClient) return "Thank you for your feedback.";
 
   const safeText = sanitizeText(text, 3000);
   const prompt = `Write a ${tone} response (3-5 sentences) to this hotel guest review. Only reference facts actually mentioned in the review — do not invent details.
@@ -275,7 +326,7 @@ Review: "${safeText}"`;
       temperature: 0.4,
       max_tokens: 500,
       response_format: { type: "json_object" }
-    });
+    }, 0, groqClient);
 
     const parsed = JSON.parse(completion.choices[0].message.content);
     if (typeof parsed.reply === "string" && parsed.reply.trim()) {

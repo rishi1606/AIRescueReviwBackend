@@ -87,7 +87,11 @@ exports.getReviews = async (req, res, next) => {
       query.$and.push({
         $or: [
           { reviewer_name: { $regex: search, $options: "i" } },
-          { review_text: { $regex: search, $options: "i" } }
+          { review_text: { $regex: search, $options: "i" } },
+          // Also match AI-extracted highlights so topic filters from the
+          // dashboard (e.g. "Location") return the same set they were counted in.
+          { issues: { $regex: search, $options: "i" } },
+          { positive_aspects: { $regex: search, $options: "i" } }
         ]
       });
     }

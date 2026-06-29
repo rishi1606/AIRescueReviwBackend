@@ -46,6 +46,9 @@ const hotelSchema = new mongoose.Schema({
     default: []
   },
 
+  admin_email: { type: String },
+  admin_name: { type: String },
+
   responseTemplates: [{
     name: { type: String, required: true },
     content: { type: String, required: true },

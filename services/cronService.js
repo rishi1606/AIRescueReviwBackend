@@ -328,6 +328,7 @@ const runAIWorker = async () => {
       retry_count: { $lt: 3 }
     }).limit(5); // Exactly 1 batch of 5
 
+    console.log(`[AI Worker] Cron tick — Found ${batch.length} unprocessed reviews`);
     if (batch.length === 0) return;
 
     console.log(`[AI Worker] Processing 1 batch of ${batch.length} reviews...`);
@@ -427,7 +428,8 @@ const runAIWorker = async () => {
             timestamp: Date.now()
           });
 
-          await review.save();
+          // Use atomic update to avoid version conflicts
+          await Review.findByIdAndUpdate(review._id, review.toObject(), { new: true });
 
           // Auto-create ticket and assign to staff
           try {
@@ -453,7 +455,8 @@ const runAIWorker = async () => {
           review.status = "Failed";
           review.is_processed = true;
         }
-        await review.save();
+        // Use atomic update to avoid version conflicts
+        await Review.findByIdAndUpdate(review._id, review.toObject(), { new: true });
         failedCount++;
       }
     }
