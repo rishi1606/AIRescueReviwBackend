@@ -8,7 +8,7 @@ const ImportBatch = require('../models/ImportBatch');
 const bcrypt = require('bcryptjs');
 
 // Production MongoDB URI from .env
-const PROD_URI = 'mongodb://gamerslog280_db_user:r8nD0HSN8gqMQYtf@ac-kdwdpci-shard-00-00.lqazojs.mongodb.net:27017,ac-kdwdpci-shard-00-01.lqazojs.mongodb.net:27017,ac-kdwdpci-shard-00-02.lqazojs.mongodb.net:27017/?ssl=true&replicaSet=atlas-39sgsc-shard-0&authSource=admin&appName=reviewplatform';
+const PROD_URI = 'mongodb://gamerslog280_db_user:r8nD0HSN8gqMQYtf@ac-kdwdpci-shard-00-00.lqazojs.mongodb.net:27017,ac-kdwdpci-shard-00-01.lqazojs.mongodb.net:27017,ac-kdwdpci-shard-00-02.lqazojs.mongodb.net:27017/reviewrescue_prod?ssl=true&replicaSet=atlas-39sgsc-shard-0&authSource=admin&appName=reviewplatform';
 
 async function deploymentSeed() {
   try {
