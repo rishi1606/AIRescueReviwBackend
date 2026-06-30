@@ -207,7 +207,7 @@ exports.importReviews = async (req, res, next) => {
 
 exports.updateClassification = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const hotel = await Hotel.findById(req.user.hotel_id);
     const extraction = req.body; // AI extracted sentiment, issues, department
 
@@ -285,7 +285,7 @@ exports.updateClassification = async (req, res, next) => {
 
 exports.approveResponse = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const { response_text, response_tone, approved_by, is_submission } = req.body;
 
     // RBAC: Only GM/Dept Head can approve directly. Staff MUST use is_submission=true.
@@ -340,7 +340,7 @@ exports.approveResponse = async (req, res, next) => {
 
 exports.rejectResponse = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const hotelFilter = await getHotelFilter(req);
     const review = await Review.findOneAndUpdate(
       { review_id, ...hotelFilter },
@@ -355,7 +355,7 @@ exports.rejectResponse = async (req, res, next) => {
 
 exports.reopenReview = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const hotelFilter = await getHotelFilter(req);
     const review = await Review.findOneAndUpdate(
       { review_id, ...hotelFilter, status: "RESPONDED" },
@@ -381,7 +381,7 @@ exports.reopenReview = async (req, res, next) => {
 
 exports.flagSuspicious = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const { suspicious_reason, flag_reason_category, flag_assigned_to, flag_assigned_to_name } = req.body;
     const hotelFilter = await getHotelFilter(req);
     const review = await Review.findOneAndUpdate(
@@ -424,7 +424,7 @@ exports.flagSuspicious = async (req, res, next) => {
 
 exports.removeSuspiciousFlag = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const hotelFilter = await getHotelFilter(req);
     const review = await Review.findOneAndUpdate(
       { review_id, ...hotelFilter },
@@ -466,7 +466,7 @@ exports.removeSuspiciousFlag = async (req, res, next) => {
 
 exports.addNote = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const { text, author } = req.body;
     const review = await Review.findOneAndUpdate(
       { review_id, ...await getHotelFilter(req) },
@@ -481,7 +481,7 @@ exports.addNote = async (req, res, next) => {
 
 exports.reanalyse = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const review = await Review.findOneAndUpdate(
       { review_id, ...await getHotelFilter(req) },
       {
@@ -531,7 +531,7 @@ exports.reanalyse = async (req, res, next) => {
 
 exports.assignStaff = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const { staff_id, staff_name } = req.body;
     const assignee_id = staff_id;
     const assignee_name = staff_name;
@@ -626,7 +626,7 @@ exports.assignStaff = async (req, res, next) => {
 
 exports.deleteReview = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     await Review.findOneAndDelete({ review_id, ...await getHotelFilter(req) });
     // Also delete linked ticket if any
     await Ticket.findOneAndDelete({ review_id, ...await getHotelFilter(req) });
@@ -654,9 +654,10 @@ exports.deleteAllReviews = async (req, res, next) => {
 
 exports.getReviewById = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id } = req.params;
     const hotelFilter = await getHotelFilter(req);
-    const review = await Review.findOne({ review_id, ...hotelFilter });
+    const review = await Review.findOne({ review_id: id, ...hotelFilter });
+
     if (!review) return res.status(404).json({ success: false, message: "Review not found" });
 
     // Fetch linked ticket if exists
@@ -673,7 +674,7 @@ exports.getReviewById = async (req, res, next) => {
 
 exports.saveDraft = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const { text, tone, model, generated_by, editor } = req.body;
 
     const review = await Review.findOne({ review_id, ...await getHotelFilter(req) });
@@ -746,7 +747,7 @@ exports.getReviewerProfile = async (req, res, next) => {
 
 exports.getSimilarReviews = async (req, res, next) => {
   try {
-    const { review_id } = req.params;
+    const { id: review_id } = req.params;
     const hotelFilter = await getHotelFilter(req);
     const review = await Review.findOne({ review_id, ...hotelFilter });
     if (!review) return res.status(404).json({ success: false, message: "Review not found" });
