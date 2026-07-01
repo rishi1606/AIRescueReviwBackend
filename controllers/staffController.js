@@ -115,19 +115,19 @@ exports.getStaffByBusiness = async (req, res, next) => {
     // Build query - get all staff for the business (no role filter)
     let query = { business_id, is_active: true };
 
-    // Authorization check for owner
-    if (current_user.role === 'owner' && current_user.business_id) {
-      // Owner can only see staff from their own business
+    // Authorization check for owner and lead
+    if ((current_user.role === 'owner' || current_user.role === 'lead') && current_user.business_id) {
+      // Owner/Lead can only see staff from their own business
       if (current_user.business_id.toString() !== business_id) {
         return res.status(403).json({
           success: false,
           error: "You can only view staff from your own business"
         });
       }
-    } else if (current_user.role !== 'superadmin' && current_user.role !== 'owner') {
+    } else if (current_user.role !== 'superadmin' && current_user.role !== 'owner' && current_user.role !== 'lead') {
       return res.status(403).json({
         success: false,
-        error: "Only owners and admins can view staff"
+        error: "Only owners, admins, and leads can view staff"
       });
     }
 

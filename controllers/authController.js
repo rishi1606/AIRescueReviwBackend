@@ -60,7 +60,8 @@ exports.register = async (req, res, next) => {
           name: staff.name,
           email: staff.email,
           role: staff.role,
-          hotel_id: staff.hotelId,
+          hotel_id: staff.hotelId?._id || staff.hotelId,
+          business_id: staff.business_id?._id || staff.business_id,
           onboarding_complete: staff.onboarding_complete
         }
       }
@@ -100,10 +101,10 @@ exports.login = async (req, res, next) => {
     const token = jwt.sign(
       {
         id: staff._id,
-        hotel_id: hotel_id,
+        hotel_id: hotel_id?._id || hotel_id,
         role: staff.role,
         department: staff.department,
-        business_id: staff.business_id
+        business_id: staff.business_id?._id || staff.business_id
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
@@ -119,10 +120,10 @@ exports.login = async (req, res, next) => {
           email: staff.email,
           role: staff.role,
           department: staff.department,
-          hotel_id: hotel_id,
+          hotel_id: hotel_id?._id || hotel_id,
           hotel_name: staff.hotelId?.hotel_name,
-          business_id: staff.business_id,
-          property_id: staff.property_id,
+          business_id: staff.business_id?._id || staff.business_id,
+          property_id: staff.property_id?._id || staff.property_id,
           onboarding_complete: staff.onboarding_complete
         }
       }

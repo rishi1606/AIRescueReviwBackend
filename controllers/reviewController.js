@@ -7,16 +7,61 @@ const Ticket = require("../models/Ticket");
 const getHotelFilter = async (req) => {
   if (req.user.role === "superadmin") return {};
 
-  // For Business Owner, Lead, Property Manager, and Staff, use business_id; otherwise use hotel_id
-  let hotel_id = req.user.hotel_id;
-  if (req.user.role === 'owner' || req.user.role === 'lead' || req.user.role === 'property_manager' || req.user.role === 'staff') {
-    const staff = await Staff.findById(req.user.id);
-    if (staff?.business_id) {
-      hotel_id = staff.business_id;
+  const staff = await Staff.findById(req.user.id);
+  const ids = new Set();
+
+  if (req.user.hotel_id) ids.add(req.user.hotel_id.toString());
+  if (req.user.business_id) ids.add(req.user.business_id.toString());
+
+  if (staff) {
+    if (staff.business_id) ids.add(staff.business_id.toString());
+    if (staff.hotelId) ids.add(staff.hotelId.toString());
+    if (staff.hotel_id) ids.add(staff.hotel_id.toString());
+  }
+
+  // Fallback: if no ID yet, find hotel by admin_email or created_by
+  if (ids.size === 0 && staff && staff.email) {
+    const hotel = await Hotel.findOne({ $or: [{ admin_email: staff.email }, { created_by: staff._id }] });
+    if (hotel) {
+      ids.add(hotel._id.toString());
+      staff.business_id = hotel._id;
+      staff.hotelId = hotel._id;
+      await staff.save().catch(() => {});
     }
   }
 
-  return { hotel_id };
+  // Find all colleagues sharing any of these IDs to collect linked property/business IDs
+  if (ids.size > 0) {
+    const idArray = Array.from(ids);
+    const colleagues = await Staff.find({
+      $or: [
+        { business_id: { $in: idArray } },
+        { hotelId: { $in: idArray } },
+        { hotel_id: { $in: idArray } }
+      ]
+    });
+    colleagues.forEach(c => {
+      if (c.business_id) ids.add(c.business_id.toString());
+      if (c.hotelId) ids.add(c.hotelId.toString());
+      if (c.hotel_id) ids.add(c.hotel_id.toString());
+    });
+
+    const expandedArray = Array.from(ids);
+    const childProps = await Hotel.find({ $or: [{ business_id: { $in: expandedArray } }, { _id: { $in: expandedArray } }] });
+    childProps.forEach(p => {
+      ids.add(p._id.toString());
+      if (p.business_id) ids.add(p.business_id.toString());
+    });
+  }
+
+  const validIds = Array.from(ids);
+  if (validIds.length === 0) {
+    return { hotel_id: null };
+  } else if (validIds.length === 1) {
+    return { hotel_id: validIds[0] };
+  } else {
+    return { hotel_id: { $in: validIds } };
+  }
 };
 
 exports.getReviews = async (req, res, next) => {
@@ -288,10 +333,27 @@ exports.approveResponse = async (req, res, next) => {
     const { id: review_id } = req.params;
     const { response_text, response_tone, approved_by, is_submission } = req.body;
 
-    // RBAC: Only GM/Dept Head can approve directly. Staff MUST use is_submission=true.
-    const isApprover = req.user.role === "gm" || req.user.role === "dept_head" || req.user.role === "superadmin";
+    // RBAC: Only Lead/Owner can approve directly. Staff MUST use is_submission=true.
+    const isApprover = req.user.role === "gm" || req.user.role === "dept_head" || req.user.role === "superadmin" || req.user.role === "owner" || req.user.role === "lead";
     if (!isApprover && !is_submission) {
       return res.status(403).json({ success: false, error: "Staff role requires Manager approval to post responses." });
+    }
+
+    const isOwner = req.user.role === "gm" || req.user.role === "superadmin" || req.user.role === "owner" || req.user.role === "property_manager";
+    const isLead = req.user.role === "dept_head" || req.user.role === "lead";
+
+    let nextStatus = "RESPONDED";
+    let nextApprovalStatus = "approved";
+
+    if (is_submission) {
+      nextStatus = "PENDING APPROVAL";
+      nextApprovalStatus = "submitted";
+    } else if (isLead) {
+      nextStatus = "LEAD APPROVED";
+      nextApprovalStatus = "lead_approved";
+    } else if (isOwner) {
+      nextStatus = "RESPONDED";
+      nextApprovalStatus = "approved";
     }
 
     console.log("APPROVE REQUEST - Review ID:", review_id, "Hotel ID:", req.user.hotel_id, "Is Submission:", is_submission);
@@ -300,7 +362,8 @@ exports.approveResponse = async (req, res, next) => {
     const updatedReview = await Review.findOneAndUpdate(
       { review_id, ...hotelFilter },
       {
-        status: is_submission ? "PENDING APPROVAL" : "RESPONDED",
+        status: nextStatus,
+        approval_status: nextApprovalStatus,
         response_text,
         response_tone,
         submitted_by: is_submission ? approved_by : undefined,
@@ -308,9 +371,9 @@ exports.approveResponse = async (req, res, next) => {
         approved_at: Date.now(),
         $push: {
           audit_log: {
-            action: is_submission ? "submitted_for_approval" : "approved",
+            action: is_submission ? "submitted_for_approval" : (isLead ? "lead_approved" : "approved"),
             actor: approved_by || req.user.name || req.user.email,
-            details: is_submission ? `Submitted for approval with ${response_tone} tone` : `Approved and published with ${response_tone} tone`,
+            details: is_submission ? `Submitted for approval with ${response_tone} tone` : (isLead ? `Approved by Lead with ${response_tone} tone` : `Approved and published with ${response_tone} tone`),
             timestamp: Date.now()
           },
           response_history: {
@@ -319,7 +382,7 @@ exports.approveResponse = async (req, res, next) => {
             tone: response_tone,
             editor: approved_by || req.user.name,
             timestamp: Date.now(),
-            is_approved: !is_submission
+            is_approved: isOwner
           }
         }
       },
@@ -361,6 +424,7 @@ exports.reopenReview = async (req, res, next) => {
       { review_id, ...hotelFilter, status: "RESPONDED" },
       {
         status: "IN REVIEW",
+        approval_status: "reopened", // Send back to reopened state
         $push: {
           audit_log: {
             action: "reopened",
@@ -541,6 +605,9 @@ exports.assignStaff = async (req, res, next) => {
 
     review.assignee_id = assignee_id;
     review.assignee_name = assignee_name;
+    review.assigned_to_staff_id = assignee_id;
+    review.assigned_to_staff_name = assignee_name;
+    review.assigned_at = Date.now();
 
     // Auto-update status to match lifecycle
     const lifecycleStatuses = ["NEW", "IN REVIEW", "RESPONDED", "CLOSED", "ESCALATED"];
@@ -572,7 +639,7 @@ exports.assignStaff = async (req, res, next) => {
       );
     } else {
       // Auto-create ticket
-      const hotel = await Hotel.findById(req.user.hotel_id);
+      const hotel = await Hotel.findById(review.hotel_id);
       const slaConfig = hotel?.slaConfig || { high: 4, medium: 24, low: 72 };
       const deptSla = hotel?.deptSlaConfig || {};
 
@@ -599,7 +666,7 @@ exports.assignStaff = async (req, res, next) => {
 
       ticket = new Ticket({
         ticket_id: "TKT-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
-        hotel_id: req.user.hotel_id,
+        hotel_id: review.hotel_id,
         review_id: review.review_id,
         guest_name: review.reviewer_name,
         review_text: review.review_text,
@@ -1010,19 +1077,27 @@ exports.getMyQueue = async (req, res, next) => {
 
     if (req.user.role === "staff") {
       // Staff sees only reviews assigned to them
-      filter.assigned_to_staff_id = req.user._id.toString();
+      const userId = (req.user._id || req.user.id).toString();
+      filter.$or = [
+        { assigned_to_staff_id: userId },
+        { assignee_id: userId }
+      ];
     } else if (req.user.role === "lead") {
       // Lead sees reviews assigned to their team
+      const userId = (req.user._id || req.user.id);
       const staff = await Staff.find({
         business_id: req.user.business_id,
-        reporting_to: req.user._id,
+        reporting_to: userId,
         is_active: true
       }).select("_id");
 
       const staffIds = staff.map(s => s._id.toString());
-      staffIds.push(req.user._id.toString()); // Include themselves
+      staffIds.push(userId.toString()); // Include themselves
 
-      filter.assigned_to_staff_id = { $in: staffIds };
+      filter.$or = [
+        { assigned_to_staff_id: { $in: staffIds } },
+        { assignee_id: { $in: staffIds } }
+      ];
     } else if (req.user.role === "owner") {
       // Owner sees all unresponded reviews for their business
       const hotelFilter = await getHotelFilter(req);
@@ -1032,10 +1107,15 @@ exports.getMyQueue = async (req, res, next) => {
     // ── FETCH REVIEWS ───────────────────────────────────────────────────────
     const reviews = await Review.find(filter)
       .select(
-        "review_id reviewer_name rating review_text review_date platform assigned_to_staff_name " +
-        "approval_status response_text submitted_by assigned_at primary_department urgency sentiment"
+        "review_id reviewer_name rating review_text review_date platform assigned_to_staff_name assigned_to_staff_id assignee_id assignee_name " +
+        "approval_status response_text submitted_by assigned_at primary_department urgency sentiment draft_history"
       )
       .sort({ assigned_at: -1, urgency: -1 });
+
+    console.log('[getMyQueue] User:', req.user.email || req.user.name || req.user.id);
+    console.log('[getMyQueue] Role:', req.user.role);
+    console.log('[getMyQueue] Filter:', JSON.stringify(filter));
+    console.log('[getMyQueue] Found reviews:', reviews.length);
 
     if (!reviews || reviews.length === 0) {
       return res.status(200).json({
@@ -1066,11 +1146,15 @@ exports.getMyQueue = async (req, res, next) => {
         review_text: r.review_text,
         review_date: r.review_date,
         platform: r.platform,
-        assigned_to: r.assigned_to_staff_name,
+        assigned_to: r.assigned_to_staff_name || r.assignee_name,
+        assigned_to_staff_id: r.assigned_to_staff_id || r.assignee_id,
+        assignee_id: r.assignee_id || r.assigned_to_staff_id,
         primary_department: r.primary_department,
         urgency: r.urgency,
         sentiment: r.sentiment,
         approval_status: r.approval_status,
+        response_text: r.response_text,
+        draft_history: r.draft_history,
         has_response: !!r.response_text,
         submitted_by: r.submitted_by,
         assigned_at: r.assigned_at
@@ -1276,96 +1360,6 @@ exports.getPendingApprovals = async (req, res, next) => {
 };
 
 // ───────────────────────────────────────────────────────────────────────────
-// APPROVE RESPONSE
-// ───────────────────────────────────────────────────────────────────────────
-exports.approveResponse = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { approved_by } = req.body;
-
-    // ── VALIDATION ──────────────────────────────────────────────────────────
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        error: "Review ID is required"
-      });
-    }
-
-    // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findById(id);
-    if (!review) {
-      return res.status(404).json({
-        success: false,
-        error: "Review not found"
-      });
-    }
-
-    // ── AUTHORIZATION ──────────────────────────────────────────────────────
-    if (req.user.role !== "superadmin" && req.user.role !== "owner" && req.user.role !== "lead") {
-      return res.status(403).json({
-        success: false,
-        error: "Only leads and owners can approve responses"
-      });
-    }
-
-    // ── VERIFY RESPONSE EXISTS ──────────────────────────────────────────────
-    if (!review.response_text) {
-      return res.status(400).json({
-        success: false,
-        error: "No response to approve"
-      });
-    }
-
-    if (review.approval_status === "approved") {
-      return res.status(400).json({
-        success: false,
-        error: "This response is already approved"
-      });
-    }
-
-    // ── APPROVE RESPONSE ────────────────────────────────────────────────────
-    review.approval_status = "approved";
-    review.approved_by = approved_by || req.user.name || req.user.email;
-    review.approved_at = Date.now();
-
-    // ── UPDATE RESPONSE HISTORY ─────────────────────────────────────────────
-    if (review.response_history && review.response_history.length > 0) {
-      review.response_history[review.response_history.length - 1].is_approved = true;
-    }
-
-    // ── ADD AUDIT LOG ───────────────────────────────────────────────────────
-    if (!review.audit_log) review.audit_log = [];
-    review.audit_log.push({
-      action: "approved",
-      actor: approved_by || req.user.name || req.user.email,
-      details: `Response approved with ${review.response_tone} tone`,
-      timestamp: Date.now()
-    });
-
-    await review.save();
-
-    // ── RETURN RESPONSE ─────────────────────────────────────────────────────
-    return res.status(200).json({
-      success: true,
-      message: "Response approved and posted to guest",
-      approval: {
-        id: review._id,
-        review_id: review.review_id,
-        approval_status: review.approval_status,
-        approved_by: review.approved_by,
-        approved_at: review.approved_at
-      }
-    });
-  } catch (err) {
-    console.error("Approve response error:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to approve response"
-    });
-  }
-};
-
-// ───────────────────────────────────────────────────────────────────────────
 // REJECT RESPONSE
 // ───────────────────────────────────────────────────────────────────────────
 exports.rejectResponse = async (req, res, next) => {
@@ -1389,7 +1383,7 @@ exports.rejectResponse = async (req, res, next) => {
     }
 
     // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findById(id);
+    const review = await Review.findOne({ review_id: id });
     if (!review) {
       return res.status(404).json({
         success: false,
