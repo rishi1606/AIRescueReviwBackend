@@ -3,6 +3,7 @@ const csv = require("csv-parser");
 const Review = require("../models/Review");
 const ImportBatch = require("../models/ImportBatch");
 const groqService = require("./groqService");
+const workflowNotificationService = require("./workflowNotificationService");
 const ticketService = require("./ticketService");
 
 exports.processCsvFile = async (filePath, originalName, hotelId) => {
@@ -68,6 +69,10 @@ exports.runCsvAnalysis = async (filePath, batchId, hotelId) => {
             });
 
             await review.save();
+            await workflowNotificationService.notifyNewReviewImported(review);
+            if (review.rating <= 1) {
+              await workflowNotificationService.notifyEscalatedReview(review);
+            }
             processedReviews.push(review);
             results.validCount++;
           } catch (err) {

@@ -43,8 +43,7 @@ exports.getNotifications = async (req, res, next) => {
     const { limit = 20, skip = 0, type, isRead } = req.query;
 
     let query = {
-      recipientId: staffId,
-      hotelId: hotelId
+      recipientId: staffId
     };
 
     if (type) query.type = type;
@@ -55,7 +54,7 @@ exports.getNotifications = async (req, res, next) => {
       .limit(parseInt(limit))
       .skip(parseInt(skip))
       .populate("relatedTicketId", "ticket_id guest_name rating")
-      .populate("relatedReviewId", "review_text rating")
+      .populate("relatedReviewId", "review_id review_text rating")
       .exec();
 
     const total = await Notification.countDocuments(query);

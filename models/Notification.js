@@ -10,10 +10,10 @@ const notificationSchema = new mongoose.Schema({
     type: String,
     enum: [
       // Staff workflow types
-      'ticket_assigned', 'response_pending_approval', 'response_approved', 'response_rejected',
-      'ticket_reassigned', 'escalation_alert', 'ticket_closed',
+      'ticket_assigned', 'assign', 'response_pending_approval', 'submitted', 'response_approved', 'lead_approved', 'response_rejected',
+      'review_rejected', 'bo_rejected', 'published', 'superadmin_published', 'ticket_reassigned', 'escalation_alert', 'ticket_closed',
       // User-facing types
-      'success', 'warning', 'info', 'import'
+      'success', 'warning', 'info', 'import', 'new_review', 'escalated'
     ],
     required: true
   },

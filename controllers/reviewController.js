@@ -1,7 +1,9 @@
+const mongoose = require("mongoose");
 const Review = require("../models/Review");
 const Hotel = require("../models/Hotel");
 const Staff = require("../models/Staff");
 const Ticket = require("../models/Ticket");
+const workflowNotificationService = require("../services/workflowNotificationService");
 
 // Helper: Build hotel filter (superadmin sees all, others see only their hotel)
 const getHotelFilter = async (req) => {
@@ -39,11 +41,11 @@ const getHotelFilter = async (req) => {
         { hotelId: { $in: idArray } },
         { hotel_id: { $in: idArray } }
       ]
-    });
-    colleagues.forEach(c => {
-      if (c.business_id) ids.add(c.business_id.toString());
-      if (c.hotelId) ids.add(c.hotelId.toString());
-      if (c.hotel_id) ids.add(c.hotel_id.toString());
+    }, 'business_id hotelId hotel_id');
+    colleagues.forEach(col => {
+      if (col.business_id) ids.add(col.business_id.toString());
+      if (col.hotelId) ids.add(col.hotelId.toString());
+      if (col.hotel_id) ids.add(col.hotel_id.toString());
     });
 
     const expandedArray = Array.from(ids);
@@ -62,6 +64,17 @@ const getHotelFilter = async (req) => {
   } else {
     return { hotel_id: { $in: validIds } };
   }
+};
+
+const findReviewByAnyId = async (id, filter = {}, userRole = "") => {
+  if (!id) return null;
+  const isObjectId = mongoose.Types.ObjectId.isValid(id) && String(new mongoose.Types.ObjectId(id)) === String(id);
+  const query = isObjectId ? { $or: [{ review_id: id }, { _id: id }] } : { review_id: id };
+  let review = await Review.findOne({ ...query, ...filter });
+  if (!review && userRole !== "staff" && Object.keys(filter).length > 0) {
+    review = await Review.findOne(query);
+  }
+  return review;
 };
 
 exports.getReviews = async (req, res, next) => {
@@ -239,6 +252,10 @@ exports.importReviews = async (req, res, next) => {
         });
         await newReview.save();
         imported++;
+        await workflowNotificationService.notifyNewReviewImported(newReview);
+        if (newReview.status === "ESCALATED" || newReview.escalation === true) {
+          await workflowNotificationService.notifyEscalatedReview(newReview);
+        }
       } catch (err) {
         errors.push({ row: r.review_id, reason: err.message });
       }
@@ -322,6 +339,10 @@ exports.updateClassification = async (req, res, next) => {
       { new: true }
     );
 
+    if (updatedReview && (updatedReview.status === "ESCALATED" || updatedReview.escalation === true)) {
+      await workflowNotificationService.notifyEscalatedReview(updatedReview);
+    }
+
     res.json({ success: true, data: updatedReview });
   } catch (err) {
     next(err);
@@ -359,8 +380,10 @@ exports.approveResponse = async (req, res, next) => {
     console.log("APPROVE REQUEST - Review ID:", review_id, "Hotel ID:", req.user.hotel_id, "Is Submission:", is_submission);
 
     const hotelFilter = await getHotelFilter(req);
-    const updatedReview = await Review.findOneAndUpdate(
-      { review_id, ...hotelFilter },
+    const revToApprove = await findReviewByAnyId(review_id, hotelFilter, req.user?.role);
+    if (!revToApprove) return res.status(404).json({ success: false, message: "Review not found" });
+    const updatedReview = await Review.findByIdAndUpdate(
+      revToApprove._id,
       {
         status: nextStatus,
         approval_status: nextApprovalStatus,
@@ -393,6 +416,13 @@ exports.approveResponse = async (req, res, next) => {
       console.log("FAILED TO FIND REVIEW FOR UPDATE");
     } else {
       console.log("SUCCESSFULLY UPDATED REVIEW:", updatedReview.status);
+      if (is_submission) {
+        await workflowNotificationService.notifyStaffSubmittedResponse(updatedReview, req.user);
+      } else if (isLead) {
+        await workflowNotificationService.notifyLeadApproved(updatedReview, req.user);
+      } else if (isOwner) {
+        await workflowNotificationService.notifyOwnerPublished(updatedReview, req.user);
+      }
     }
 
     res.json({ success: true, data: updatedReview });
@@ -401,20 +431,7 @@ exports.approveResponse = async (req, res, next) => {
   }
 };
 
-exports.rejectResponse = async (req, res, next) => {
-  try {
-    const { id: review_id } = req.params;
-    const hotelFilter = await getHotelFilter(req);
-    const review = await Review.findOneAndUpdate(
-      { review_id, ...hotelFilter },
-      { status: "IN REVIEW" },
-      { new: true }
-    );
-    res.json({ success: true, data: review });
-  } catch (err) {
-    next(err);
-  }
-};
+// Old rejectResponse replaced by full workflow rejectResponse below at line 1365
 
 exports.reopenReview = async (req, res, next) => {
   try {
@@ -629,6 +646,10 @@ exports.assignStaff = async (req, res, next) => {
     }
 
     await review.save();
+    await workflowNotificationService.notifyReviewAssigned(review, req.user);
+    if (review.escalation || review.status === "ESCALATED") {
+      await workflowNotificationService.notifyEscalatedReview(review);
+    }
 
     let ticket;
     if (review.linked_ticket_id) {
@@ -723,7 +744,7 @@ exports.getReviewById = async (req, res, next) => {
   try {
     const { id } = req.params;
     const hotelFilter = await getHotelFilter(req);
-    const review = await Review.findOne({ review_id: id, ...hotelFilter });
+    const review = await findReviewByAnyId(id, hotelFilter, req.user?.role);
 
     if (!review) return res.status(404).json({ success: false, message: "Review not found" });
 
@@ -731,6 +752,9 @@ exports.getReviewById = async (req, res, next) => {
     let ticket = null;
     if (review.linked_ticket_id) {
       ticket = await Ticket.findOne({ ticket_id: review.linked_ticket_id, ...hotelFilter });
+      if (!ticket && req.user?.role !== "staff") {
+        ticket = await Ticket.findOne({ ticket_id: review.linked_ticket_id });
+      }
     }
 
     res.json({ success: true, data: { review, ticket } });
@@ -744,7 +768,7 @@ exports.saveDraft = async (req, res, next) => {
     const { id: review_id } = req.params;
     const { text, tone, model, generated_by, editor } = req.body;
 
-    const review = await Review.findOne({ review_id, ...await getHotelFilter(req) });
+    const review = await findReviewByAnyId(review_id, await getHotelFilter(req), req.user?.role);
     if (!review) return res.status(404).json({ success: false, message: "Review not found" });
 
     const currentVersion = (review.draft_history || []).length + 1;
@@ -917,7 +941,7 @@ exports.assignReview = async (req, res, next) => {
     }
 
     // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findById(id);
+    const review = await findReviewByAnyId(id, await getHotelFilter(req), req.user?.role);
     if (!review) {
       return res.status(404).json({
         success: false,
@@ -969,6 +993,10 @@ exports.assignReview = async (req, res, next) => {
     });
 
     await review.save();
+    await workflowNotificationService.notifyReviewAssigned(review, req.user);
+    if (review.escalation || review.status === "ESCALATED") {
+      await workflowNotificationService.notifyEscalatedReview(review);
+    }
 
     // ── RETURN RESPONSE ─────────────────────────────────────────────────────
     return res.status(200).json({
@@ -1007,7 +1035,7 @@ exports.unassignReview = async (req, res, next) => {
     }
 
     // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findById(id);
+    const review = await findReviewByAnyId(id, await getHotelFilter(req), req.user?.role);
     if (!review) {
       return res.status(404).json({
         success: false,
@@ -1214,7 +1242,7 @@ exports.submitResponse = async (req, res, next) => {
     }
 
     // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findById(id);
+    const review = await findReviewByAnyId(id, await getHotelFilter(req), req.user?.role);
     if (!review) {
       return res.status(404).json({
         success: false,
@@ -1265,6 +1293,7 @@ exports.submitResponse = async (req, res, next) => {
     });
 
     await review.save();
+    await workflowNotificationService.notifyStaffSubmittedResponse(review, req.user);
 
     // ── RETURN RESPONSE ─────────────────────────────────────────────────────
     return res.status(200).json({
@@ -1376,6 +1405,25 @@ exports.rejectResponse = async (req, res, next) => {
     }
 
     if (!rejection_reason || !rejection_reason.trim()) {
+      const rev = await findReviewByAnyId(id, await getHotelFilter(req), req.user?.role);
+      if (rev && rev.approval_status !== "submitted") {
+        // Event 4: LEAD REJECTS REVIEW (outright rejection without response)
+        rev.status = "REJECTED";
+        rev.approval_status = "rejected";
+        rev.rejection_by = req.user.name || req.user.email;
+        rev.rejection_at = Date.now();
+        await rev.save();
+        await workflowNotificationService.notifyReviewRejected(rev, req.user);
+        return res.status(200).json({
+          success: true,
+          message: "Review rejected and removed from workflow",
+          rejection: {
+            id: rev._id,
+            review_id: rev.review_id,
+            approval_status: rev.approval_status
+          }
+        });
+      }
       return res.status(400).json({
         success: false,
         error: "Rejection reason is required"
@@ -1383,7 +1431,7 @@ exports.rejectResponse = async (req, res, next) => {
     }
 
     // ── FETCH REVIEW ────────────────────────────────────────────────────────
-    const review = await Review.findOne({ review_id: id });
+    const review = await findReviewByAnyId(id, await getHotelFilter(req), req.user?.role);
     if (!review) {
       return res.status(404).json({
         success: false,
@@ -1430,6 +1478,11 @@ exports.rejectResponse = async (req, res, next) => {
     });
 
     await review.save();
+    if (["owner", "gm", "property_manager", "superadmin"].includes(req.user.role)) {
+      await workflowNotificationService.notifyOwnerRejectedToLead(review, req.user, rejection_reason);
+    } else {
+      await workflowNotificationService.notifyLeadRequestedChanges(review, req.user, rejection_reason);
+    }
 
     // ── RETURN RESPONSE ─────────────────────────────────────────────────────
     return res.status(200).json({
