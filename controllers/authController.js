@@ -80,20 +80,15 @@ exports.login = async (req, res, next) => {
     const isMatch = await bcrypt.compare(password, staff.password);
     if (!isMatch) return res.status(400).json({ success: false, error: "Invalid email or password" });
 
-    // Determine hotel_id based on role
-    let hotel_id = staff.hotelId?._id || staff.hotelId;
+    // Determine hotel_id (prioritize business_id if present)
+    let hotel_id = staff.business_id?._id || staff.business_id || staff.hotelId?._id || staff.hotelId;
 
-    // For owner and property_manager, use business_id
-    if ((staff.role === "owner" || staff.role === "property_manager") && staff.business_id) {
-      hotel_id = staff.business_id;
-      // Check if business is active
-      const business = await Hotel.findById(staff.business_id);
+    // Check if business is active (superadmins are exempt)
+    if (hotel_id && staff.role !== "superadmin") {
+      const business = await Hotel.findById(hotel_id);
       if (business && business.is_active === false) {
         return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
       }
-    } else if (staff.role !== "superadmin" && staff.hotelId && staff.hotelId.is_active === false) {
-      // Block login if business is deactivated (superadmins are exempt)
-      return res.status(403).json({ success: false, error: "Business is inactive please contact administration" });
     }
 
     // Legacy hotel assignment removed - users must have valid business_id
@@ -136,7 +131,11 @@ exports.login = async (req, res, next) => {
 exports.getMe = async (req, res, next) => {
   try {
     const staff = await Staff.findById(req.user.id).populate("hotelId");
-    if (staff && !staff.hotelId) {
+    if (staff && !staff.hotelId && staff.business_id) {
+      staff.hotelId = staff.business_id;
+      await staff.save();
+      await staff.populate("hotelId");
+    } else if (staff && !staff.hotelId && !staff.business_id && staff.role === "superadmin") {
       let hotel = await Hotel.findOne();
       if (!hotel) {
         hotel = new Hotel({

@@ -32,22 +32,7 @@ const getHotelFilter = async (req) => {
     }
   }
 
-  // Find all colleagues sharing any of these IDs to collect linked property/business IDs
   if (ids.size > 0) {
-    const idArray = Array.from(ids);
-    const colleagues = await Staff.find({
-      $or: [
-        { business_id: { $in: idArray } },
-        { hotelId: { $in: idArray } },
-        { hotel_id: { $in: idArray } }
-      ]
-    }, 'business_id hotelId hotel_id');
-    colleagues.forEach(col => {
-      if (col.business_id) ids.add(col.business_id.toString());
-      if (col.hotelId) ids.add(col.hotelId.toString());
-      if (col.hotel_id) ids.add(col.hotel_id.toString());
-    });
-
     const expandedArray = Array.from(ids);
     const childProps = await Hotel.find({ $or: [{ business_id: { $in: expandedArray } }, { _id: { $in: expandedArray } }] });
     childProps.forEach(p => {

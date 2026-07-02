@@ -6,20 +6,13 @@ const { initCronJobs } = require("../services/cronService");
 exports.getHotel = async (req, res, next) => {
   try {
     let hotel;
-    let hotelId = req.user?.hotel_id;
-
-    // For Business Owner, use business_id; otherwise use hotel_id
-    if (req.user?.role === 'owner' || req.user?.role === 'property_manager') {
-      const staff = await Staff.findById(req.user.id);
-      if (staff?.business_id) {
-        hotelId = staff.business_id;
-      }
-    }
+    const staff = await Staff.findById(req.user.id);
+    let hotelId = staff?.business_id || staff?.hotelId || req.user?.business_id || req.user?.hotel_id;
 
     if (hotelId) {
       hotel = await Hotel.findById(hotelId).lean();
     }
-    if (!hotel) {
+    if (!hotel && req.user?.role === 'superadmin') {
       hotel = await Hotel.findOne().lean();
     }
     if (!hotel) {
@@ -70,12 +63,13 @@ exports.updateHotel = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Number of rooms must be a number" });
     }
 
-    let hotelId = req.user && req.user.hotel_id;
+    const staff = await Staff.findById(req.user.id);
+    let hotelId = staff?.business_id || staff?.hotelId || req.user?.business_id || req.user?.hotel_id;
     let hotel;
     if (hotelId) {
       hotel = await Hotel.findById(hotelId);
     }
-    if (!hotel) {
+    if (!hotel && req.user?.role === 'superadmin') {
       hotel = await Hotel.findOne();
     }
     if (!hotel) {

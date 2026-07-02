@@ -16,20 +16,16 @@ async function getUserDepartment(req) {
   return null;
 }
 
+// Helper function to resolve hotel_id reliably across all roles
+async function getHotelId(req) {
+  const staff = await Staff.findById(req.user.id);
+  return staff?.business_id || staff?.hotelId || req.user?.business_id || req.user?.hotel_id;
+}
+
 exports.getStats = async (req, res, next) => {
   try {
-    // For Business Owner, use business_id; otherwise use hotel_id
-    let hotel_id = req.user.hotel_id;
-    console.log('[getStats] User role:', req.user.role, 'Initial hotel_id:', hotel_id);
-
-    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
-      const staff = await Staff.findById(req.user.id);
-      console.log('[getStats] Staff found:', !!staff, 'business_id:', staff?.business_id);
-      if (staff?.business_id) {
-        hotel_id = staff.business_id;
-      }
-    }
-    console.log('[getStats] Final hotel_id:', hotel_id);
+    const hotel_id = await getHotelId(req);
+    console.log('[getStats] User role:', req.user.role, 'Final hotel_id:', hotel_id);
 
     const userDept = await getUserDepartment(req);
     console.log('[getStats] userDept:', userDept, 'req.user.department:', req.user.department);
@@ -53,38 +49,55 @@ exports.getStats = async (req, res, next) => {
       avgRatingAgg,
       criticalIssues,
       escalationRisk,
-      mixed,
-      neutral,
-      resolved,
-      approved,
-      flagged
+      pendingTickets,
+      reviewsWithResponse,
+      previousPeriodReviews,
+      staffCount,
+      activeColleagues,
+      responseRateAgg,
+      avgResponseTimeAgg,
+      ratingDistAgg,
+      deptBreakdownAgg,
+      sentimentBreakdownAgg,
+      platformBreakdownAgg
     ] = await Promise.all([
       Review.countDocuments(reviewQuery),
-      Review.aggregate([
-        { $match: ratingMatch },
-        { $group: { _id: null, avg: { $avg: "$rating" } } }
-      ]),
-      Review.countDocuments({ ...reviewQuery, urgency: "High" }),
+      Review.aggregate([{ $match: ratingMatch }, { $group: { _id: null, avg: { $avg: "$rating" } } }]),
+      Review.countDocuments({ ...reviewQuery, status: "Critical" }),
       Review.countDocuments({ ...reviewQuery, escalation_risk: true }),
-      Review.countDocuments({ ...reviewQuery, sentiment: "Mixed" }),
-      Review.countDocuments({ ...reviewQuery, sentiment: "Neutral" }),
-      Ticket.countDocuments({ ...ticketQuery, status: "Resolved" }),
-      Review.countDocuments({ ...reviewQuery, status: "Approved" }),
-      Review.countDocuments({ ...reviewQuery, is_suspicious: true })
+      Ticket.countDocuments({ ...ticketQuery, status: { $in: ["Open", "In Progress"] } }),
+      Review.countDocuments({ ...reviewQuery, response_status: "Responded" }),
+      Review.countDocuments({ ...reviewQuery, createdAt: { $lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }),
+      Staff.countDocuments({ hotelId: hotel_id }),
+      Staff.countDocuments({ hotelId: hotel_id, status: "active" }),
+      Review.aggregate([{ $match: reviewQuery }, { $group: { _id: null, total: { $sum: 1 }, responded: { $sum: { $cond: [{ $ne: ["$response_text", null] }, 1, 0] } } } }]),
+      Review.aggregate([{ $match: { ...reviewQuery, response_date: { $exists: true, $ne: null } } }, { $project: { diffHours: { $divide: [{ $subtract: ["$response_date", "$createdAt"] }, 3600000] } } }, { $group: { _id: null, avgHours: { $avg: "$diffHours" } } }]),
+      Review.aggregate([{ $match: ratingMatch }, { $group: { _id: "$rating", count: { $sum: 1 } } }, { $sort: { _id: -1 } }]),
+      Review.aggregate([{ $match: reviewQuery }, { $group: { _id: "$primary_department", count: { $sum: 1 }, avgRating: { $avg: "$rating" } } }]),
+      Review.aggregate([{ $match: reviewQuery }, { $group: { _id: "$sentiment", count: { $sum: 1 } } }]),
+      Review.aggregate([{ $match: reviewQuery }, { $group: { _id: "$platform", count: { $sum: 1 } } }])
     ]);
+
+    const avgRating = avgRatingAgg[0]?.avg || 0;
+    const responseRate = responseRateAgg[0] ? Math.round((responseRateAgg[0].responded / responseRateAgg[0].total) * 100) : 0;
+    const avgResponseTime = avgResponseTimeAgg[0] ? Math.round(avgResponseTimeAgg[0].avgHours) : 0;
+
+    const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    ratingDistAgg.forEach(item => { if (item._id && ratingDistribution[item._id] !== undefined) ratingDistribution[item._id] = item.count; });
+
+    const departmentBreakdown = deptBreakdownAgg.map(d => ({ department: d._id || "Other", count: d.count, avgRating: Math.round((d.avgRating || 0) * 10) / 10 }));
+    const sentimentBreakdown = { Positive: 0, Neutral: 0, Negative: 0, Mixed: 0 };
+    sentimentBreakdownAgg.forEach(item => { if (item._id && sentimentBreakdown[item._id] !== undefined) sentimentBreakdown[item._id] = item.count; });
+    const platformBreakdown = platformBreakdownAgg.map(p => ({ platform: p._id || "Other", count: p.count }));
 
     res.json({
       success: true,
       data: {
-        totalReviews,
-        avgRating: avgRatingAgg[0]?.avg || 0,
-        criticalIssues,
-        escalationRisk,
-        mixed,
-        neutral,
-        resolved,
-        approved,
-        flagged
+        totalReviews, avgRating: Math.round(avgRating * 10) / 10, criticalIssues, escalationRisk, pendingTickets,
+        responseRate, avgResponseTime, ratingDistribution, departmentBreakdown, sentimentBreakdown, platformBreakdown,
+        totalStaff: staffCount, activeStaff: activeColleagues,
+        previousPeriodReviews: previousPeriodReviews || 0,
+        reviewsWithResponse: reviewsWithResponse || 0
       }
     });
   } catch (err) {
@@ -94,14 +107,7 @@ exports.getStats = async (req, res, next) => {
 
 exports.getSentimentTrend = async (req, res, next) => {
   try {
-    // For Business Owner, use business_id; otherwise use hotel_id
-    let hotel_id = req.user.hotel_id;
-    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
-      const staff = await Staff.findById(req.user.id);
-      if (staff?.business_id) {
-        hotel_id = staff.business_id;
-      }
-    }
+    const hotel_id = await getHotelId(req);
 
     const { range = 7 } = req.query;
     const days = parseInt(range);
@@ -141,14 +147,7 @@ exports.getSentimentTrend = async (req, res, next) => {
 
 exports.getRecentReviews = async (req, res, next) => {
   try {
-    // For Business Owner, use business_id; otherwise use hotel_id
-    let hotel_id = req.user.hotel_id;
-    if (req.user.role === 'owner' || req.user.role === 'property_manager') {
-      const staff = await Staff.findById(req.user.id);
-      if (staff?.business_id) {
-        hotel_id = staff.business_id;
-      }
-    }
+    const hotel_id = await getHotelId(req);
 
     const userDept = await getUserDepartment(req);
 
