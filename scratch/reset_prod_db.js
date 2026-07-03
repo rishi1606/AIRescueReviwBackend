@@ -14,25 +14,10 @@ async function resetProdDb() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Connected to Atlas!');
 
-    // Clear all collections
-    console.log('\n🗑️  Clearing all collections...');
-    await Review.deleteMany({});
-    console.log('✅ Cleared Reviews');
-
-    await Ticket.deleteMany({});
-    console.log('✅ Cleared Tickets');
-
-    await Notification.deleteMany({});
-    console.log('✅ Cleared Notifications');
-
-    await ImportBatch.deleteMany({});
-    console.log('✅ Cleared ImportBatches');
-
-    await Staff.deleteMany({});
-    console.log('✅ Cleared Staff');
-
-    await Hotel.deleteMany({});
-    console.log('✅ Cleared Hotels');
+    // Completely drop the entire database and all its collections
+    console.log('\n💥 Dropping the entire database (removing all collections completely)...');
+    await mongoose.connection.db.dropDatabase();
+    console.log('✅ Completely wiped database and removed all collections!');
 
     // Create Superadmin
     console.log('\n👤 Creating superadmin account...');
