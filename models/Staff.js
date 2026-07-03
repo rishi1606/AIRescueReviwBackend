@@ -16,7 +16,7 @@ const staffSchema = new mongoose.Schema({
   department: {
     type: String,
     enum: [
-      "Front Desk", "Housekeeping", "Food & Beverage", "Maintenance", "Management"
+      "Front Office", "Front Desk", "Housekeeping", "Food & Beverage", "Maintenance", "Spa", "Management", "Facilities"
     ],
     default: null
   },
