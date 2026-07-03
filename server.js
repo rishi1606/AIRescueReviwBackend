@@ -1,4 +1,13 @@
 require("dotenv").config();
+
+// Remove all console outputs across the entire backend
+const noop = () => {};
+console.log = noop;
+console.info = noop;
+console.warn = noop;
+console.debug = noop;
+console.error = noop;
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -25,7 +34,7 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 app.use(helmet());
-app.use(morgan("dev"));
+// app.use(morgan("dev"));
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI)

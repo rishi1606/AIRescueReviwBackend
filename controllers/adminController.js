@@ -14,8 +14,8 @@ exports.getBusinesses = async (req, res, next) => {
 
     // Build query based on user role
     if (req.user.role === "superadmin") {
-      // Superadmin sees all except their own hotel
-      query = req.user.hotel_id ? { _id: { $ne: req.user.hotel_id } } : {};
+      // Superadmin sees all businesses
+      query = {};
     } else if (req.user.role === "owner" || req.user.role === "property_manager") {
       // Owner/Property Manager see only their business
       const staff = await Staff.findById(req.user.id);
@@ -33,7 +33,9 @@ exports.getBusinesses = async (req, res, next) => {
     // Enrich with property counts and review counts
     const enriched = await Promise.all(
       businesses.map(async (biz) => {
-        const reviewCount = await Review.countDocuments({ hotel_id: biz._id });
+        const reviews = await Review.find({ hotel_id: biz._id }, 'rating');
+        const reviewCount = reviews.length;
+        const avgRating = reviewCount > 0 ? Number((reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / reviewCount).toFixed(1)) : 0;
         const staffCount = await Staff.countDocuments({ hotelId: biz._id });
         return {
           _id: biz._id,
@@ -42,6 +44,7 @@ exports.getBusinesses = async (req, res, next) => {
           number_of_rooms: biz.number_of_rooms,
           propertyCount: (biz.properties || []).length,
           reviewCount,
+          avgRating,
           staffCount,
           owner: biz.admin_email ? { email: biz.admin_email, name: biz.admin_name } : null,
           createdAt: biz.createdAt || biz._id.getTimestamp(),
