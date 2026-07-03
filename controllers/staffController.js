@@ -26,10 +26,11 @@ exports.createStaff = async (req, res, next) => {
       });
     }
 
-    // Department validation: Staff requires a Lead in that department
-    if (role === 'staff' && department) {
+    // Department validation: Staff requires a Lead in that department for this property
+    if (role === 'staff' && department && property_id) {
       const departmentLeadCount = await Staff.countDocuments({
         business_id,
+        property_id,
         department,
         role: 'lead',
         is_active: true
@@ -38,15 +39,16 @@ exports.createStaff = async (req, res, next) => {
       if (departmentLeadCount === 0) {
         return res.status(400).json({
           success: false,
-          message: `Cannot add Staff to "${department}" department without a Lead. First add a Lead to this department.`
+          message: `Cannot add Staff to "${department}" department without a Lead for this property. First add a Lead.`
         });
       }
     }
 
-    // Department validation: Only 1 Lead per department
-    if (role === 'lead' && department) {
+    // Property validation: Only 1 Lead per department per property
+    if (role === 'lead' && property_id && department) {
       const existingLeadCount = await Staff.countDocuments({
         business_id,
+        property_id,
         department,
         role: 'lead',
         is_active: true
@@ -55,7 +57,7 @@ exports.createStaff = async (req, res, next) => {
       if (existingLeadCount > 0) {
         return res.status(400).json({
           success: false,
-          message: `Only 1 Lead allowed per department. "${department}" already has a Lead.`
+          message: `Only 1 Lead allowed per department per property. "${department}" already has a Lead for this property.`
         });
       }
     }
