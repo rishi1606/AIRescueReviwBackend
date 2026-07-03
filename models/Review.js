@@ -109,7 +109,7 @@ const reviewSchema = new mongoose.Schema({
   // ── APPROVAL FIELDS ─────────────────────────────
   approval_status: {
     type: String,
-    enum: ["pending", "submitted", "approved", "rejected"],
+    enum: ["pending", "submitted", "approved", "rejected", "reopened"],
     default: "pending"
   },
   rejection_reason: { type: String }, // Feedback if rejected
